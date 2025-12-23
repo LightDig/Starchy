@@ -1,0 +1,81 @@
+#!/usr/bin/bash
+
+# Arch Recovery SFS
+# Copyright (C) 2025 LightDig
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+build() {
+	add_dir /squashfs
+	add_dir /squashfs_source
+	add_dir /tmpfs_overlay
+	add_binary unsquashfs
+	add_binary pv
+	add_binary mkfs.ext2
+	add_binary zramctl
+	add_binary cryptsetup
+	add_binary dmsetup
+	add_module squashfs
+	add_module overlay
+	add_module loop
+	add_module zram
+	add_module dm-crypt
+	add_module dm-mod
+	add_file /usr/lib/udev/rules.d/10-dm.rules
+	add_file /usr/lib/udev/rules.d/13-dm-disk.rules
+	add_file /usr/lib/udev/rules.d/95-dm-notify.rules
+	add_file /usr/lib/initcpio/udev/11-dm-initramfs.rules
+	add_file /usr/lib/udev/rules.d/11-dm-initramfs.rules
+	add_runscript
+}
+
+help() {
+	cat <<HELPEOF
+A small SquashFS mounting hook that only provides two features:
+1: Mount a squashfs directly from a block device
+2: Mount a squashfs from a file on a block device
+
+Please note that as of right now this module only supports providing a UUID for the mounting
+
+Basic Syntax:
+  directly:
+    squashfs=<partuuid>
+    squashfs=UUID=<uuid>
+    squashfs=PARTUUID=<partuuid>
+    squashfs=/dev/<device-path>
+
+  from file:
+    squashfs=<partuuid>:<filepath>
+    squashfs=UUID=<uuid>:<filepath>
+    squashfs=PARTUUID=<partuuid>:<filepath>
+    squashfs=/dev/<device-path>:<filepath>
+
+Other variables:
+  squashfs_opts: mount options for the SFS
+  squashfs_source_opts: mount options for the filesystem on which the SFS resides
+  squashfs_overlay_size: size in % for how large the RAM filesystem should be
+  squashsf_timeout: how long should system wait for block device to become available
+  squashfs_copy: when present, the SFS gets copied to RAM
+  squashfs_zram: set to valid zram compression algorithm to make tmpfs zram compressed
+
+All of these variables can have squashfs substituted for sfs
+
+Examples:
+  SFS on filesystem:
+    squashfs=UUID=E3A2-6C6D:/recovery/recovery.sfs
+
+  SFS on partition to be copied with compressed tmpfs:
+    squashfs=8cee88be-7b78-4112-bba4-622f6467ae71 sfs_copy sfs_zram=lzo sfs_overlay_size=180
+HELPEOF
+}

@@ -1,0 +1,185 @@
+#!/usr/bin/ash
+
+# Arch Recovery SFS
+# Copyright (C) 2025 LightDig
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Simple script that gives two options for mounting a squashfs:
+# 1: Mount a squashfs that resides directly on a block device
+# 2: Mount a squashfs file on a specified filesystem
+
+make_overlay() {
+	if [[ $squashfs_zram ]]; then
+		modprobe zram
+		mem_size=$((($(awk '/MemTotal/ {print($2)}' < /proc/meminfo) * $squashfs_overlay_size) / 100))
+		overlay=$(zramctl -fs ${mem_size}K -a $squashfs_zram)
+		mkfs.ext2 "$overlay" 1> /dev/null
+		mount "$overlay" /tmpfs_overlay
+		mkdir /tmpfs_overlay/upper
+		mkdir /tmpfs_overlay/work
+		mount -t overlay overlay -o lowerdir=/squashfs,upperdir=/tmpfs_overlay/upper,workdir=/tmpfs_overlay/work /new_root
+	else
+		mount -t tmpfs tmpfs -o size=$squashfs_overlay_size% /tmpfs_overlay
+		mkdir /tmpfs_overlay/upper
+		mkdir /tmpfs_overlay/work
+		mount -t overlay overlay -o lowerdir=/squashfs,upperdir=/tmpfs_overlay/upper,workdir=/tmpfs_overlay/work /new_root
+	fi
+}
+
+# function for mounting the filesystem on which the sfs resides
+mount_sfs_source() {
+	# check if partition is encrypted
+	if cryptsetup isLuks "$dev"; then
+		# create loop for decrypting
+		while true; do
+			# try opening luks container
+			if cryptsetup open "$dev" system; then
+				# if successful, break the loop and continue to mount
+				break
+			else # on failure provide option to retry or shut down
+				echo
+				echo "Failed to open encrypted device: $dev"
+				printf "Press Enter to shut down or r+Enter to retry"
+				read -s retry
+				[[ $retry != "*r*" ]] && poweroff -f
+				echo; echo
+			fi
+		done
+		mount -o "$squashfs_source_opts" /dev/mapper/system /squashfs_source
+	else # if partition is not encrypted mount directly
+		mount -o "$squashfs_source_opts" "$dev" /squashfs_source
+	fi
+}
+
+main() {
+	## establish options
+	# mount options
+	# aliases
+	[[ $sfs_opts ]] && squashfs_opts=$sfs_opts
+	[[ $sfs_source_opts ]] && squashfs_source_opts=$sfs_source_opts
+	[[ $sfs_overlay_size ]] && squashfs_overlay_size=$sfs_overlay_size
+	[[ $sfs_timeout ]] && squashfs_timeout=$sfs_timeout
+	[[ $sfs_copy ]] && squashfs_copy=$sfs_copy
+	[[ $sfs_zram ]] && squashfs_zram=$sfs_zram
+
+	# full-name
+	[[ -z $squashfs_opts ]] && squashfs_opts=ro
+	[[ -z $squashfs_source_opts ]] && squashfs_source_opts=ro
+	[[ -z $squashfs_overlay_size ]] && squashfs_overlay_size=80
+	[[ -z $squashfs_timeout ]] && squashfs_timeout=10
+
+	# device options
+
+	# if no prefix for device is provided, use PARTUUID as default,
+	# as SquashFS partitions don't have a filesystem UUID.
+	case $squashfs in
+		UUID=* | PARTUUID=* | LABEL=* | /dev/* )
+			# get device path for later
+			dev=$(echo "$squashfs" | sed -E 's/:.*//;s/(UUID=|PARTUUID=|LABEL=)/\/dev\/disk\/by-\1\//;s/PARTUUID=/partuuid/;s/UUID=/uuid/;s/LABEL=/label/')
+			# create path of sfs file/partition
+			path=$(echo "$squashfs" | sed -E 's/[^:]*:/\/squashfs_source\//;s/(UUID=|PARTUUID=|LABEL=)/\/dev\/disk\/by-\1\//;s/PARTUUID=/partuuid/;s/UUID=/uuid/;s/LABEL=/label/')
+		;;
+		*)
+			# prepend PARTUUID if no prefix is given
+			squashfs=PARTUUID=$squashfs
+			dev=/dev/disk/by-partuuid/$(echo "$squashfs" | sed -E 's/:.*//;s/PARTUUID=//')
+			path=$(echo "$squashfs" | sed -E 's/[^:]*:/\/squashfs_source\//;s/PARTUUID=/\/dev\/disk\/by-partuuid\//')
+		;;
+	esac
+
+	## wait for drive to become available
+	echo "Waiting $squashfs_timeout seconds for device..."
+	i=$squashfs_timeout
+	while [[ $i -gt 0 ]]; do
+		if ls "$dev" &> /dev/null; then
+			echo "Found device: $dev"
+			break
+		else
+			i=$((i-1))
+			sleep 1
+		fi
+	done
+	[[ $i -eq 0 ]] && echo "Failed to find device: $dev" && return 1
+
+	# If SFS resides on a filesystem
+	# mount SFS
+
+	if [[ $dev != $path ]]; then
+		mount_sfs_source
+	fi
+
+	if [[ $squashfs_copy ]]; then
+		size=$(unsquashfs -s $path | awk '/Filesystem size/ {print $3}')
+		if [[ $(($(awk '/MemTotal/ {print($2)}' < /proc/meminfo) - $size / 1024)) -gt 2097151 ]]; then
+			echo "Copying SquashFS to RAM; this may take a while..."
+			blocks=$(($size / 65536 + 1))
+			if [[ $dev = $path ]]; then
+				dd "if=$path" bs=65536 count=$blocks | pv --size $(($blocks * 65536)) | dd of=/root_fs.sfs
+			else
+				dd "if=$path" | pv --size $size | dd of=/root_fs.sfs
+			fi
+			path=/root_fs.sfs
+		else
+			unset squashfs_copy
+			echo "Limited RAM, skipping copy_to_ram..."
+		fi
+	fi
+
+	mount -t squashfs -o $squashfs_opts "$path" /squashfs
+}
+
+run_hook() {
+	if [[ -n $squashfs ]]; then
+		if ! main; then
+			echo
+			echo "Failed mounting SquashFS with tmpfs overlay"
+		else
+			# remember squashfs device path
+			s_dev=$dev
+
+			# set mount handler
+			mount_handler=make_overlay
+		fi
+	fi
+}
+
+run_latehook() {
+	# if squashfs is not copied to RAM, unless disabled, a systemd-service
+	# will be placed that shuts down the system should the device be removed
+	if [[ -z $squashfs_copy ]] && [[ -z $no_unplug_poweroff ]]; then
+		cat <<EOF > /new_root/etc/systemd/system/unplug_poweroff.service
+[Unit]
+Description=Poweroff when device is unplugged
+
+[Service]
+Before=sysinit.target
+ExecStart=/usr/bin/bash /sfs/unplug_poweroff.sh
+
+[Install]
+WantedBy=sysinit.target
+EOF
+	cat <<EOF > /new_root/sfs/unplug_poweroff.sh
+#!/usr/bin/bash
+while true; do
+	if ! ls "$s_dev" &> /dev/null; then
+		echo _so > /proc/sysrq-trigger
+	fi
+	sleep 1
+done
+EOF
+	[[ ! -d /new_root/etc/systemd/system/sysinit.target.wants ]] && mkdir /new_root/etc/systemd/system/sysinit.target.wants
+	ln -sf /etc/systemd/system/unplug_poweroff.service /new_root/etc/systemd/system/sysinit.target.wants/
+	fi
+}

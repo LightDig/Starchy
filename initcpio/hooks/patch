@@ -1,0 +1,159 @@
+#!/usr/bin/ash
+
+# Early Patch system for Arch Recovery SFS
+# Copyright (C) 2025 LightDig
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+mount_patch_source() {
+	if cryptsetup isLuks "$dev"; then
+		while true; do
+			if ! cryptsetup open "$dev" patch; then
+				echo
+				echo "Failed to open encrypted device: $dev"
+				printf "Press Enter to continue or r+Enter to retry"
+				read -s retry
+				[[ $retry != "*r*" ]] && poweroff -f
+				echo; echo
+			fi
+		done
+		mount -o "$patch_source_opts" /dev/mapper/patch /patch_source
+	else
+		mount -o "$patch_source_opts" "$dev" /patch_source
+	fi
+	[[ ! -f "$path" ]] && return 1
+	return 0
+}
+
+main() {
+	# establish options
+	[[ -z $patch_opts ]] && patch_opts=ro
+	[[ -z $patch_source_opts ]] && patch_source_opts=ro
+
+	case $patch in
+		UUID=* | PARTUUID=* | LABEL=* | /dev/* )
+			# get device path for later
+			dev=$(echo "$patch" | sed -E 's/:.*//;s/(UUID=|PARTUUID=|LABEL)/\/dev\/disk\/by-\1\//;s/PARTUUID=/partuuid/;s/UUID=/uuid/;s/LABEL=/label/')
+			# create path of patch file/partition
+			path=$(echo "$patch" | sed -E 's/[^:]*:\//\/patch_source\//;s/(UUID=|PARTUUID=|LABEL=)/\/dev\/disk\/by-\1\//;s/PARTUUID=/partuuid/;s/UUID=/uuid/;s/LABEL=/label/')
+		;;
+		squashfs:/*|sfs:/*|squashfs_source|sfs_source)
+			# option to load patch from file on the squashfs_source mount point rather than mount a new partition
+			# by adding _source the patch itself is considered to be the source, allowing the squashfs to be stored
+			# on the partition of the patch
+
+			# set $dev to indicate a previous mountpoint
+			if [[ $patch = "*source" ]]; then
+				dev=sfs_source
+				patch_location=/squashfs_source
+			else
+				dev=sfs
+			fi
+			path=$(echo "$patch" | sed -E 's/[^:]*:\//\/squashfs_source\//')
+		;;
+		*)
+			# prepend PARTUUID if no prefix is given
+			patch=PARTUUID=$patch
+			dev=/dev/disk/by-partuuid/$(echo "$patch" | sed -E 's/:.*//;s/PARTUUID=//')
+			path=$(echo "$patch" | sed -E 's/[^:]*:/\/patch_source\//;s/PARTUUID=/\/dev\/disk\/by-partuuid\//')
+		;;
+	esac
+
+	# if patch_location wasn't set by previous case switch statements
+	# set the location to the default
+	[[ -z $patch_location ]] && patch_location=/patch
+
+	# Here is where the squashfs hook would wait to the drive to become available
+	# This is not necessary in this script since this hook must run after the
+	# SquashFS hook anyways, which already waits for block devices. Instead we only
+	# need to check one time and if the block device isn't present, we cancel execution
+
+	# check that block device is available; skip if block device is sfs
+	if [[ "$dev" != "sfs*" ]] && ! ls "$dev" &> /dev/null; then
+		return 1
+	fi
+
+	# if patch resides on filesystem, load it
+	# if patch file is not present, cancel loading
+	if [[ "$dev" != "sfs*" ]] && [[ $dev != $path ]]; then
+		if ! mount_patch_source; then return 1; fi
+	fi
+
+	# mount patch, then check for presence of init.sh
+	[[ ! $patch = "*source" ]] && mount -o "$patch_opts" "$path" /patch
+	[[ ! -f "$patch_location/init.sh" ]] && return 1
+	return 0
+}
+
+# run patch script after the filesystem has been mounted under /new_root
+# create function to allow registering a systemd service to start up a script
+# during systemd init to allow using binaries available on the system
+# default target is multi-user.target
+# To create a more specific hook, it must be written manually
+#
+# setting no_unmount to true in the script prevents automatic unmounting of
+# the patch; useful if the patch later bind mounts a subdirectory of the root
+# filesystem, e.g. to allow for persistant storage or if patch is really large.
+run_latehook() {
+	if ! mount | grep "on /patch type" &> /dev/null; then return 1; fi
+	echo "Running patch script..."
+	export nr=/new_root
+	export pd="$patch_location"
+	export squashfs_dev="${squashfs%%:/*}"
+	export patch_dev="$dev"
+	export opts="$patch_script_opts"
+	no_unmount=$(ash <<PEOF
+register_systemd() {
+	[[ -z \$1 ]] && return 1
+	[[ \$2 ]] && wants=\$2
+	[[ -z \$2 ]] && wants=multi-user.target
+	[[ \$3 ]] && service_name=\$3
+	[[ -z \$3 ]] && service_name=PatchForSfs
+	[[ \$4 ]] && description=\$4
+	[[ -z \$4 ]] && description="Patch for SFS"
+	cat <<EOF > /new_root/etc/systemd/system/\$3.service
+[Unit]
+Description=\$description
+
+[Service]
+ExecStart=/bin/bash -c "source \$1 &> /sfs/systemd-patch.log"
+
+[Install]
+WantedBy=\$wants
+EOF
+	[[ ! -d "/etc/systemd/system/\$wants.wants" ]] && mkdir "/etc/systemd/system/\$wants.wants"
+	ln -sf /etc/systemd/system/\$service_name.service /etc/systemd/system/\$wants.wants/
+}
+	source /patch/init.sh
+	echo $no_unmount
+PEOF
+	) # ash script stops here
+
+	# if script has not requested to keep patch mounted, unmount
+	# $no_unmount is in quotes to avoid an error if the above script fails due to an error
+	if [[ "$no_unmount" != true ]]; then
+		umount /patch
+		umount /patch_source 2> /dev/null
+	fi
+}
+
+run_hook() {
+	if [[ $patch ]]; then
+		if ! main; then
+			echo "Patch not present or setup script not provided"
+			umount /patch 2> /dev/null
+			umount /patch_source 2> /dev/null
+		fi
+	fi
+}

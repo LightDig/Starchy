@@ -1,0 +1,39 @@
+#!/usr/bin/bash
+
+# Arch Recovery SFS
+# Copyright (C) 2025 LightDig
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+build() {
+	add_dir /patch
+	add_dir /patch_source
+	add_binary cryptsetup
+	add_binary dmsetup
+	add_module dm-crypt
+	add_module dm-mod
+	add_file /usr/lib/udev/rules.d/10-dm.rules
+	add_file /usr/lib/udev/rules.d/13-dm-disk.rules
+	add_file /usr/lib/udev/rules.d/95-dm-notify.rules
+	add_file /usr/lib/initcpio/udev/11-dm-initramfs.rules
+	add_file /usr/lib/udev/rules.d/11-dm-initramfs.rules
+	add_runscript
+}
+
+help() {
+	cat <<HELPEOF
+A hook intended to be run with the SFS Arch Recovery System that can
+'patch' the system in the initramfs stage by executing a setup.ash file.
+HELPEOF
+}

@@ -1,0 +1,10 @@
+#!/usr/bin/ash
+
+run_hook() {
+BLACKLIST
+		if [[ $stop = true ]]; then
+			printf "Press enter to shut down"
+			poweroff -f
+		fi
+	done
+}
