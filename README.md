@@ -6,19 +6,19 @@ A small project written in shell and python that aims to create a usable Arch Li
 This project provides a shell script `starchy.sh` and a wrapper script `starchy.py` that can be used to easily pass arguments onto the shell script and load/save presets.
 
 ## Warning
-This is a program that MUST be run as root. Since these are scripts that can take user input, make sure you don't copy and paste malicious code or misconfigure the scripts. Common sense should go a long way in making sure your system stays intact. When running python wrapper you are given an overview of all the options. Running the bash script directly gives you a warning but no overview.
+This is a program that MUST be run as root. Since it's mostly written in shell, it is trivially easy to input malicious arbitrary code. Common sense should go a long way in making sure your system stays intact. When running the python wrapper you are given an overview of all the options and the characters `$()[]&|;` are considered invalid input, however this might not be enough to fully preclude all attacks. Running the bash script directly gives you a warning but no overview.
 
 ## Features
 - Generate a SquashFS filesystem with a functional Arch Linux Installation with:
-- - A root user and one unprivileged user
+  - A root user and one unprivileged user
   - An option to write folders and tarballs into the filesystem
   - Many configuration options
   - Sourcing a custom script that contains user-defined functions to do basically anything
 - Generate an initramfs that can mount the SFS with support for:
-- - A tmpfs overlay for writing temporary changes in memory
+  - A tmpfs overlay for writing temporary changes in memory
   - An option to use zram so that changes in memory are compressed
   - A patch system that allows loading a script + files to make changes to your system without fully rebuilding
-  - - The patch system can be used to set up a persistant storage
+    - The patch system can be used to set up a persistant storage
     - The patch can be on an encrypted partition
     - The patch system starts out in the initramfs but has a function for registering a script as a simple systemd service for anything that can not be done from the initramfs
   - A `copy_to_ram` feature to allow faster reading + detaching the removable medium containing the image
@@ -26,5 +26,20 @@ This is a program that MUST be run as root. Since these are scripts that can tak
   - A boot password
   - Booting the SFS from a file or from a partition
   - Booting the SFS from a file on an encrypted partition
+- Store/load json or bash presets to recreate your system
+  - Json presets require the python wrapper but can easily be configured and have options overriden from the command line.
+  - Bash presets can run without python but the file needs to be manually edited to make changes.
 
 Since there are a lot of options and no one correct way to do things, information on how to use this project is available [in the wiki](https://github.com/LightDig/Starchy/wiki).
+
+## Todo
+- [ ] Make starchy.py more compact
+- [ ] Write more wiki pages
+- [ ] Create a complete example preset with openbox
+- [ ] Properly set up `cmdline-blacklist` hook
+- [ ] Properly set up and test `passwd` hook
+- [ ] Test disk encryption
+- [ ] Test making system without `build` and `vdso` kernel module folders
+- [ ] Properly comment code
+- [ ] Test persistant storage setup
+- [x] Test `unplug_poweroff` feature
