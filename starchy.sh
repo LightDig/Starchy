@@ -122,7 +122,6 @@ for i in $extra_packages_arr; do extra_packages+=("$(echo "$i" | tr '\33' ' ')")
 for i in $scripts_arr; do scripts+=("$(echo "$i" | tr '\33' ' ')"); done
 for i in $firmware_arr; do linux_firmware+=("$(echo "$i" | tr '\33' ' ')"); done
 for i in $copy_to_root_arr; do copy_to_root+=("$(echo "$i" | tr '\33' ' ')"); done
-mkinitcpio_cmdline_blacklist=($mkinitcpio_cmdline_blacklist)
 
 # set default arrays if none are provided from a wrapper
 # check that all arrays are set, otherwise set their default values
@@ -308,6 +307,9 @@ fi
 
 # ### POST-CHROOT ###
 post_chroot
+
+# Set all files in home folder to be owned by unprivileged user
+chown -R 1000:1000 "$root/home/$user"
 
 # clear pacman cache as well as yay package files
 rm "$src"/var/cache/pacman/pkg/*

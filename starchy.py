@@ -239,7 +239,7 @@ if args.mkinitcpio_passwd != "":
 	args.mkinitcpio_hooks.insert(args.mkinitcpio_hooks.index(hook_before_passwd)+1,"passwd")
 
 
-def prompt_continue(q:str="Continue"):
+def prompt_continue(q="Continue"):
 	try:
 		continue_=input("".join((q,' [y/N]> ')))
 	except KeyboardInterrupt:
@@ -249,6 +249,11 @@ def prompt_continue(q:str="Continue"):
 
 	if continue_.lower() not in ('y','yes','yae'):
 		sys.exit("exit")
+
+def prompt_overwrite(f):
+	if f.is_file():
+		print("".join(('File "',str(f),'" already exists')))
+		prompt_continue("Overwrite?")
 
 print("WARNING: This is a python wrapper that runs shell scripts on basis of USER INPUT as ROOT.")
 print("It is very easy for malicious input to cause harm to your system!")
@@ -367,91 +372,92 @@ for i in args.export,args.export_bash:
 		print("".join(('The above options will be exported to: "',str(i),'"')))
 prompt_continue()
 
-args.path = Path(args.path).expanduser().absolute()
-args.build_dir = Path(args.build_dir).expanduser().absolute()
+# keep old path string in case of --export-bash
+path_str=args.path
+
+# expand paths of script, build directory and mkinitcpio directory
+for x in 'path','build_dir','mkinitcpio_dir','export','export_bash':
+	if args.__getattribute__(x):
+		args.__setattr__(x,Path(args.__getattribute__(x)).expanduser().absolute())
+
+# expand output directory
+# if none provided, output dir is ${build_dir}/output
 if args.output_dir:
 	args.output_dir = Path(args.output_dir).expanduser().absolute()
 else:
 	args.output_dir = "".join((str(args.build_dir),"/output"))
-args.mkinitcpio_dir = Path(args.mkinitcpio_dir).expanduser().absolute()
 
-# Turn an list into a 0x1b separated array that can later be turned
-# back into a bash array
-# null separation throws an Exception :/
-def script_array(array):
-	return " ".join([x.replace(' ','\33') for x in array])
+# create dictionary with all options
+opts = {
+	"yay": args.yay,
+	"user": args.user,
+	"no_root_passwd": args.no_root_passwd,
+	"timezone": args.timezone,
+	"hostname": args.hostname,
+	"keymap": args.keymap,
+	"shell": args.shell,
+	"root_shell": args.root_shell,
+	"compression": args.compression,
+	"systemd_enable": args.systemd_enable,
+	"systemd_disable": args.systemd_disable,
+	"systemd_mask": args.systemd_mask,
+	"extra_packages": args.extra_packages,
+	"flags": args.flags,
+	"scripts": [str(x) for x in args.scripts],
+	"firmware": args.firmware,
+	"copy_to_root": [str(x) for x in args.copy_to_root],
+	"mkinitcpio": args.mkinitcpio,
+	"mkinitcpio_modules": args.mkinitcpio_modules,
+	"mkinitcpio_binaries": args.mkinitcpio_binaries,
+	"mkinitcpio_files": args.mkinitcpio_files,
+	"mkinitcpio_hooks": args.mkinitcpio_hooks,
+	"mkinitcpio_passwd": args.mkinitcpio_passwd,
+	"mkinitcpio_cmdline_blacklist": args.mkinitcpio_cmdline_blacklist,
+	"mkinitcpio_dir": str(args.mkinitcpio_dir),
+	"no_patch": args.no_patch,
+	"only_mkinitcpio": args.only_mkinitcpio
+}
 
-# create export dictionairy if needed
-if args.export or args.export_bash:
-	export_opts = {
-		"yay": args.yay,
-		"user": args.user,
-		"no_root_passwd": args.no_root_passwd,
-		"timezone": args.timezone,
-		"hostname": args.hostname,
-		"keymap": args.keymap,
-		"shell": args.shell,
-		"root_shell": args.root_shell,
-		"compression": args.compression,
-		"systemd_enable": args.systemd_enable,
-		"systemd_disable": args.systemd_disable,
-		"systemd_mask": args.systemd_mask,
-		"extra_packages": args.extra_packages,
-		"flags": args.flags,
-		"scripts": [str(x) for x in args.scripts],
-		"firmware": args.firmware,
-		"copy_to_root": [str(x) for x in args.copy_to_root],
-		"mkinitcpio": args.mkinitcpio,
-		"mkinitcpio_modules": args.mkinitcpio_modules,
-		"mkinitcpio_binaries": args.mkinitcpio_binaries,
-		"mkinitcpio_files": args.mkinitcpio_files,
-		"mkinitcpio_hooks": args.mkinitcpio_hooks,
-		"mkinitcpio_passwd": args.mkinitcpio_passwd,
-		"mkinitcpio_cmdline_blacklist": args.mkinitcpio_cmdline_blacklist,
-		"mkinitcpio_dir": str(args.mkinitcpio_dir),
-		"no_patch": args.no_patch,
-		"only_mkinitcpio": args.only_mkinitcpio
-	}
+# create function for checking illegal characters
+def validate_opt(i,n):
+	if not (set(i).isdisjoint('$()[]|;<>') and set((n)).isdisjoint('$()[]|;<>')):
+		sys.exit("".join(("Following pair contains illegal characters: ",i,"=",n)))
+	return n
 
 # export options to a json file
 if args.export:
-	# expand export path
-	args.export = Path(args.export).expanduser().absolute()
 	# check if file exists, ask to overwrite if it does
-	if args.export.is_file():
-		print("".join(('File "',str(args.export),'" already exists')))
-		prompt_continue("Overwrite?")
+	prompt_overwrite(args.export)
 	# write json file
 	with open(args.export,'w') as file:
-		json.dump(export_opts,file,indent=2,allow_nan=False)
+		json.dump(opts,file,indent=2,allow_nan=False)
 	# if a bash export also needs to take place, don't stop execution yet
 	if not args.export_bash:
 		sys.exit()
 
+# remove flags array
+opts.pop('flags')
+
 # export options as a bash script
 if args.export_bash:
-	# expand export path
-	args.export_bash = Path(args.export_bash).expanduser().absolute()
 	# check if file exists, ask to overwrite if it does
-	if args.export_bash.is_file():
-		print("".join(('File "',str(args.export_bash),'" already exists')))
-		prompt_continue("Overwrite?")
+	prompt_overwrite(args.export_bash)
 	# simple function for processing arrays and boolean values
-	def parse_object(arr):
-		if type(arr) is list:
-			return "".join(('('," ".join(arr),')'))
-		elif type(arr) is bool:
-			return str(arr).lower()
+	def parse_object(i,x):
+		if type(x) is list:
+			return "".join(('(',validate_opt(i," ".join(x)),')'))
+		elif type(x) is bool:
+			return str(x).lower()
 		else:
-			return "".join(('"',str(arr),'"'))
+			return validate_opt(i,"".join(('"',str(x),'"')))
 	# create main part of script
-	exports="\n".join(["".join((i,'=',parse_object(x))) for i,x in export_opts.items() if i != "flags"])
+	exports="\n".join(["".join((i,'=',parse_object(i,x))) for i,x in opts.items() if i != "flags"])
 	flags="\n".join(["".join((x,'=true')) for x in args.flags])
 	# open file for writing
 	with open(args.export_bash,'w') as file:
 		# write header
 		file.write("""#!/usr/bin/bash
-# This is an autogenerated script that establishes a set of options for building an Arch Linux system
+# This is an generated script that establishes a set of options for building an Arch Linux system
 
 # Options
 """
@@ -459,52 +465,34 @@ if args.export_bash:
 		file.write(exports) # write main options
 		file.write("\n\n# Flags\n")
 		file.write(flags) # write flags
-		file.write("".join(("\n\n# Run script\nsource ",str(args.path))))
+		# write section to source script
+		file.write("".join(('\n\n# Run script\nif [[ -f "',path_str,'" ]]; then\n\tsource "',path_str,'"\nelse\n\techo Script not found!\n\texit 1\nfi')))
 	# make file executable
 	args.export_bash.chmod(0o755)
 	sys.exit()
 
+# Function to turn list into a 0x1b separated array that can later be turned back into a bash array
+# null separation throws an Exception in bash :/
+def script_array(array):
+	return " ".join([x.replace(' ','\33') for x in array])
+
+# create function for turning options into environment variables
+def envify(i,x):
+	if type(x) is list:
+		return script_array(x)
+	elif type(x) is bool:
+		return str(x).lower()
+	else:
+		return str(x)
+
 # Set up environment variables
-env = {
-	"wdir": str(args.build_dir),
-	"odir": str(args.output_dir),
-	"yay": args.yay,
-	"user": args.user,
-	"no_root_passwd": str(args.no_root_passwd).lower(),
-	"timezone": args.timezone,
-	"hostname": args.hostname,
-	"keymap": args.keymap,
-	"user_shell": args.shell,
-	"root_shell": args.root_shell,
-	"compression": args.compression,
-	"sd_enable_arr": script_array(args.systemd_enable),
-	"sd_disable_arr": script_array(args.systemd_disable),
-	"sd_mask_arr": script_array(args.systemd_mask),
-	"extra_packages_arr": script_array(args.extra_packages),
-	"scripts_arr": script_array(args.scripts),
-	"firmware_arr": script_array(args.firmware),
-	"copy_to_root_arr": script_array(args.copy_to_root),
-	"mkinitcpio": str(args.mkinitcpio).lower(),
-	"mkinitcpio_modules": " ".join(args.mkinitcpio_modules),
-	"mkinitcpio_binaries": " ".join(args.mkinitcpio_binaries),
-	"mkinitcpio_files": " ".join(args.mkinitcpio_files),
-	"mkinitcpio_hooks": " ".join(args.mkinitcpio_hooks),
-	"mkinitcpio_passwd": args.mkinitcpio_passwd,
-	"mkinitcpio_cmdline_blacklist": " ".join(args.mkinitcpio_cmdline_blacklist),
-	"mdir": str(args.mkinitcpio_dir),
-	"only_mkinitcpio": str(args.only_mkinitcpio).lower(),
-	"warning": "false"
-}
+env = {i:validate_opt(i,envify(i,x)) for i,x in opts.items()}
 
+# Disable warning in script
+env.update({'warning':'false'})
+
+# Add flags seperately to array
 env.update({x:"true" for x in args.flags})
-
-# check that none of the values contain dangerous characters
-for i,x in env.items():
-	if not (set(x).isdisjoint('$()[]|;') and set(i).isdisjoint('$()[]|')):
-		print("".join(('Option "',i,'" contains illegal characters')))
-		quit=True
-if quit:
-	sys.exit(1)
 
 print("\n---\n")
 if args.path.is_file():
