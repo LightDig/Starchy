@@ -1,10 +1,38 @@
 #!/usr/bin/ash
 
+# Copyright (C) 2025 LightDig
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# SOFTWARE.
+
+# Hook to blacklist certain cmdline parameters
+# Intended to block parameters such as init that could potentially
+# be a security risk
+
 run_hook() {
-BLACKLIST
-		if [[ $stop = true ]]; then
-			printf "Press enter to shut down"
-			poweroff -f
-		fi
+	list=($(sed -E 's/=(".*"|[^ ]*( |$))/ /g' < /proc/cmdline))
+	for i in "${list[@]}"; do
+		for x in BLACKLIST; do
+			if [[ "$(echo "$i" | sed 's/=.*//')" = "$x" ]]
+				echo "Illegal option detected: $x"
+				stop=true
+			fi
+		done
 	done
+	if [[ $stop = true ]]; then
+		printf "Press any key to shut down"
+		read -sn 1
+		poweroff -f
+	fi
 }

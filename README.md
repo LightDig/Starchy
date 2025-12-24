@@ -33,7 +33,9 @@ This is a program that MUST be run as root. Since it's mostly written in shell, 
 Since there are a lot of options and no one correct way to do things, information on how to use this project is available [in the wiki](https://github.com/LightDig/Starchy/wiki).
 
 ## Prerequisites
-This program only supports Arch Linux. If you want to run it on an Arch-based distribution, you must uncomment some lines in `starchy.sh`. Do this at your own risk!
+This program only supports Arch Linux because it depends on Arch-specific packages. If you want to run it on an Arch-based distribution, you must uncomment some lines in `starchy.sh`. Do this at your own risk! Since Arch-based distributions have different repositories, it will likely not result a vanilla Arch system, but rather a minimal Arch derivative.
+
+It is possible to run this script from the official Arch installation medium if you do not have an Arch system installed (use `iwctl` to connect to WiFi).
 
 **Package requirements**
 |Package|Use|

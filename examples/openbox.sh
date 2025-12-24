@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-pre_chroot() {
+pre_pacstrap() {
 	# openbox packages
 	p_openbox=(openbox xorg-xinit polybar dunst hsetroot gnome-disk-utility lxterminal lxrandr qalculate-gtk gucharmap pcmanfm baobab pulseaudio pavucontrol sof-firmware blueman rofi xcape xorg-server file-roller slop xorg-xprop wmctrl alsa-utils gedit lxqt-policykit slock libinput)
 
@@ -10,6 +10,41 @@ pre_chroot() {
 	# register packages if needed
 	[[ $openbox = true ]] && extra_packages+=("${p_openbox[@]}")
 	[[ $shell = zsh ]] && extra_packages+=("${p_zsh[@]}")
+}
+
+post_chroot() {
+	mv "$root/home/user" "$root/home/$user"
+
+	# Download and modify dunstrc example from dikiaap/dotfiles
+	wget https://raw.githubusercontent.com/dikiaap/dotfiles/master/.dunst/dunstrc -O "$root/home/$user/.config/dunst/dunstrc"
+	sed -Ei 's/Paper/AdwaitaLegacy/g' "$root/home/$user/.config/dunst/dunstrc"
+
+	# Download example desktop background image (https://unsplash.com/photos/volcano-erupting-with-glowing-lava-and-smoke-OV3rAjhb8r0)
+	wget https://images.unsplash.com/photo-1760710003079-03415284552a\?q=80\&w=1471\&auto=format\&fit=crop\&ixlib=rb-4.1.0\&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D -O "$root/home/$user/.config/dunst/dunstrc"
+
+	# Download and configure polywins script from https://github.com/uniquepointer/polywins
+	wget https://raw.githubusercontent.com/uniquepointer/polywins/refs/heads/master/polywins.sh -O "$root/home/$user/.config/polybar/scripts/polywins.sh"
+	sed -Ei 's/(active_text_color="#)250F0B/\1F0EEF0/;s/(active_underline="#)ECB3B2/\1F0C6F0/;s/(inactive_text_color="#)250F0B/\1A5A8A6/' "$root/home/$user/.config/polybar/scripts/polywins.sh"
+	chmod +x "$root/home/$user/.config/polybar/scripts/polywins.sh"
+
+	# create power command that prints battery percentage as a number
+	echo -e "#!/usr/bin/bash\ncat /sys/class/power_supply/BAT0/capacity" > "$root/usr/local/bin/power"
+	chmod 755 "$root"/usr/local/bin/power
+
+	# Make sfsinfo command
+	cat <<INFOEOF > "$root/usr/local/bin/sfsinfo"
+cat <<EOF
+Squashed Arch Recovery System, $(date +%B) image:
+Kernel: \$(uname -r)
+
+build date:$r $(date +%Y-%m-%d)
+age: \$(expr \( \$(date +%s) - $(date +%s) \) / 1440) days
+EOF
+INFOEOF
+	ln -s /usr/local/bin/sfsinfo "$root/usr/local/bin/sinfo"
+	ln -s /usr/local/bin/sfsinfo "$root/usr/local/bin/info"
+	ln -s /usr/local/bin/sfsinfo "$root/usr/local/bin/sfs"
+	chmod +x "$root/usr/local/bin/sfsinfo"
 
 	# Create systemd service for locking screen when user suspends
 	# Only when $openbox is set to true
@@ -27,63 +62,22 @@ ExecStart=/usr/bin/slock
 WantedBy=sleep.target
 EOF
 
-}
+	arch-chroot "$root" <<EOF
+# Enable slock service
+[[ $openbox ]] && echo "systemctl enable slock@$user"
 
-post_chroot() {
-	# Download a dunstrc example from dikiaap/dotfiles
-	wget https://raw.githubusercontent.com/dikiaap/dotfiles/master/.dunst/dunstrc -O "$root/home/$user/.config/dunst/dunstrc"
-	sed -Ei 's/Paper/AdwaitaLegacy/g' "$root/home/$user/.config/dunst/dunstrc"
+# set up shell
+if [[ "$shell" = zsh ]]; then
+	# install zsh-syntax-highlighting and zsh-autosuggestions plugins
+	sudo -u "$user" sh -c "\$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+	sudo -u "$user" sh -c "cd ~/.oh-my-zsh/plugins && git clone https://github.com/zsh-users/zsh-syntax-highlighting.git && git clone https://github.com/zsh-users/zsh-autosuggestions"
+fi
+EOF
 
 	# clear dotfiles in homes
-	rm -r "$root"/root/.*
+	rm -rf "$root"/root/.*
 	rm "$root"/home/*/.{bash*,zcomp*}
 
 	# remove guile cache
 	rm -rf "$root"/usr/lib/guile/3.0/ccache/*
-
-	# create power command that prints battery percentage as a number
-	echo -e "#!/usr/bin/bash\ncat /sys/class/power_supply/BAT0/capacity" > "$root"/usr/local/bin/power
-	chmod 755 "$root"/usr/local/bin/power
-
-	# Install catpuccin-mocha-pink-cursor onto the system
-	bash -c "cd \"$root/home/$user/.icons/\" && unzip \"$(pwd)/catppuccin-mocha-pink-cursors.zip\""
-
-	# enable autologin on boot if selected
-	[[ $autologin = true ]] && cat <<EOF > "$root"/etc/greetd/config.toml
-[terminal]
-# The VT to run the greeter on. Can be "next", "current" or a number
-# designating the VT.
-vt = 1
-
-# The default session, also known as the greeter.
-[default_session]
-
-# \`agreety\` is the bundled agetty/login-lookalike. You can replace \`/bin/sh\`
-# with whatever you want started, such as \`sway\`.
-command = "agreety --cmd $shell"
-
-# The user to run the command as. The privileges this user must have depends
-# on the greeter. A graphical greeter may for example require the user to be
-# in the \`video\` group.
-user = "$user"
-
-[initial_session]
-command = "$shell"
-user = "$user"
-EOF
-
-	# Make sfsinfo command
-	cat <<INFOEOF > "$root/usr/local/bin/sfsinfo"
-cat <<EOF
-Squashed Arch Recovery System, $(date +%B) image:
-Kernel: \$(uname -r)
-
-build date:$r $(date +%Y-%m-%d)
-age: \$(expr \( \$(date +%s) - $(date +%s) \) / 1440) days
-EOF
-INFOEOF
-	ln -s /usr/local/bin/sfsinfo "$root/usr/local/bin/sinfo"
-	ln -s /usr/local/bin/sfsinfo "$root/usr/local/bin/info"
-	ln -s /usr/local/bin/sfsinfo "$root/usr/local/bin/sfs"
-	chmod +x "$root/usr/local/bin/sfsinfo"
 }

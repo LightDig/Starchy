@@ -23,6 +23,8 @@ import subprocess
 import sys
 import tomllib
 
+# ### ARGUMENTS ###
+
 parser = ArgumentParser(
 	prog='starchy.py',
 	description="Squashed Arch Recovery System Environment Variable Generator\n\nThis program allows you to specify the many environment variables as command line arguments.",
@@ -70,7 +72,8 @@ parser.add_argument('-k','--keymap',
 parser.add_argument('-s','--shell',
 	default="/usr/bin/bash",
 	type=str,
-	help="Default shell on system (Default = /usr/bin/bash)"
+	help="Default shell on system (Default = /usr/bin/bash)",
+	dest="user_shell"
 )
 parser.add_argument('--root-shell',
 	default=None,
@@ -115,7 +118,7 @@ parser.add_argument('-f','--flags',
 	nargs='*',
 	default=[],
 	type=str,
-	help="A set of flags for things to include in the system"
+	help="A set of flags for things to include in the system. The only flag that is supported by default is 'populate' which fills the home directory with standard folders like Downloads and Documents."
 )
 parser.add_argument('-S','--scripts',
 	nargs='*',
@@ -227,17 +230,7 @@ parser.add_argument('--export-bash',
 
 args = parser.parse_args()
 
-# remove patch if specified
-if args.no_patch:
-	args.mkinitcpio_hooks.remove("patch")
-
-# add passwd hook if specified
-if args.mkinitcpio_passwd != "":
-	if "keyboard" not in args.mkinitcpio_hooks:
-		sys.exit("The keyboard hook must be in mkinitcpio hooks to use passwd!\nIt is also recommended to put keymap after keyboard if you use a non-US layout.")
-	hook_before_passwd = ("keymap" if "keymap" in args.mkinitcpio_hooks else "keyboard")
-	args.mkinitcpio_hooks.insert(args.mkinitcpio_hooks.index(hook_before_passwd)+1,"passwd")
-
+# ### PROMPT FUNCTIONS ###
 
 def prompt_continue(q="Continue"):
 	try:
@@ -255,14 +248,65 @@ def prompt_overwrite(f):
 		print("".join(('File "',str(f),'" already exists')))
 		prompt_continue("Overwrite?")
 
+# ### WARNING ###
 print("WARNING: This is a python wrapper that runs shell scripts on basis of USER INPUT as ROOT.")
 print("It is very easy for malicious input to cause harm to your system!")
 print("Do not enter any commands or run any scripts from people you do not trust!")
 print("Once you press enter, all user input will be displayed for inspection.")
 print("It is still a good idea to look through preset and script files.")
 print()
+print("This program is licenced under GPLv3 (C) LightDig")
+print()
 prompt_continue()
 
+# ### ARG PROCESSING ###
+
+## Paths
+# keep path string in case of --export-bash
+path_str=args.path
+
+# expand paths of script, build directory and mkinitcpio directory
+for x in 'path','build_dir','mkinitcpio_dir','export','export_bash','preset':
+	if args.__getattribute__(x):
+		args.__setattr__(x,Path(args.__getattribute__(x)).expanduser().absolute())
+
+# expand path lists
+for x in 'scripts','copy_to_root':
+	if args.__getattribute__(x):
+		args.__setattr__(x,[Path(y).expanduser().absolute() for y in args.__getattribute__(x)])
+
+## Scripts
+# check that provided scripts exists
+for x in args.scripts:
+	if not x.is_file():
+		sys.exit("".join(('Script file \33[33m"',str(x),'"\33[0m does not exist!')))
+
+## Copy to root
+# check that tarballs/folders exist
+for x in args.copy_to_root:
+	if not x.exists():
+		sys.exit("".join(('File/folder \33[33m"',str(x),'"\33[0m does not exist!')))
+
+# expand output directory
+# if none provided, output dir is ${build_dir}/output
+if args.output_dir:
+	args.output_dir = Path(args.output_dir).expanduser().absolute()
+else:
+	args.output_dir = Path("".join((str(args.build_dir),"/output")))
+
+## Mkinitcpio
+# remove patch if specified
+if args.no_patch:
+	args.mkinitcpio_hooks.remove("patch")
+
+# add passwd hook if specified
+if args.mkinitcpio_passwd != "":
+	if "keyboard" not in args.mkinitcpio_hooks:
+		sys.exit("The keyboard hook must be in mkinitcpio hooks to use passwd!\nIt is also recommended to put keymap after keyboard if you use a non-US layout.")
+	hook_before_passwd = ("keymap" if "keymap" in args.mkinitcpio_hooks else "keyboard")
+	args.mkinitcpio_hooks.insert(args.mkinitcpio_hooks.index(hook_before_passwd)+1,"passwd")
+
+## Flags
 # list of flags that may not be set using the -f option
 illegal_flags = {"wdir","odir","mdir","yay","user","no_root_passwd","timezone","hostname","keymap",
 	"user_shell","root_shell","compression","sd_enable_arr","sd_disable_arr","sd_mask_arr","root"
@@ -280,9 +324,10 @@ for x in args.flags:
 if quit:
 	sys.exit(1)
 
+## General Config
+
 if args.no_root_passwd and not args.user:
-	print("You have no unprivileged user account, yet root password is disabled!")
-	sys.exit(1)
+	sys.exit("You have no unprivileged user account, yet root password is disabled!")
 
 # if no hostname is set, get from host
 if args.hostname is None:
@@ -294,76 +339,48 @@ if args.keymap is None:
 
 # if root-shell is not set, make the same as shell
 if args.root_shell is None:
-	args.root_shell = args.shell
+	args.root_shell = args.user_shell
 
 if args.export:
 	args.export = Path(args.export).expanduser().absolute()
 
-# check that provided scripts exists
-args.scripts = [Path(x).expanduser().absolute() for x in args.scripts]
-for x in args.scripts:
-	if not x.is_file():
-		print("".join(('Script file "',str(x),'" does not exist!')))
-		sys.exit(1)
+opts={}
+## Load preset
+if args.preset:
+	with open(args.preset) as file:
+		opts.update(json.load(file))
+
+## Copy opts to dict for display
+opts.update(args.__dict__)
+for x in 'build_dir','output_dir','export','export_bash','path','preset':
+	opts.pop(x)
 
 # print the directory in which all the work will be done
-print("".join(("Building squashfs with directory: ","".join(('"',args.build_dir,'"')))))
+print("".join(("\33[1mBuilding squashfs with directory:\33[0m \33[33m","".join(('"',str(args.build_dir),'"\33[0m')))))
 
 # if a preset is given, show the location of the preset
-# TODO display full qualified path
 if args.preset:
-	print("".join(('From preset: "',args.preset,'"')))
+	print("".join(('\33[1mFrom preset:\33[0m \33[33m"',str(args.preset),'"\33[0m')))
 print()
 
-# print if yay is included.
-print("".join(("Yay included: ",("True" if args.yay != "" else "False"))))
-if args.yay:
-	print("".join(("Yay to be compiled by user: ",args.yay)))
+# function to display each item properly in the confirmation prompt
+def display_item(i):
+	if i == "":
+		return "\33[31mnull\33[0m"
+	elif i == []:
+		return "\33[31mnone\33[0m"
+	elif type(i) is list:
+		return "".join(('(\33[34m',", ".join([display_item(x) for x in i]),'\33[0m)'))
+	elif type(i) is bool:
+		return {True:'\33[32myes\33[0m',False:'\33[31mno\33[0m'}[i]
+	elif isinstance(i,Path):
+		return "".join(('\33[33m"',str(i),'"\33[0m'))
+	else:
+		return "".join(('"',str(i),'"'))
 
-# show if an unprivileged user is to be added and what name it will be given
-print("".join(("Unprivileged user: ",("".join(('"',args.user,'"')) if args.user else "False"))))
-
-# show if the root account will be given a password
-print("".join(("Root password: ",str(not args.no_root_passwd))))
-
-# show what timezone the system will be set to
-print("".join(("Timezone: ",args.timezone)))
-
-# show the hostname that will be set on the system
-print("".join(('Hostname: "',args.hostname)))
-
-# show which keymap will be set on the system
-print("".join(('Keymap: "',args.keymap)))
-
-# show the shells of the root and user
-# don't show user shell if user is not being added
-print("".join(('Root shell: "',args.root_shell,'"')))
-if args.user:
-	print("".join(('User shell: "',args.shell,'"')))
-
-# display compression options for mksquashfs
-print("".join(('Compression options: "',args.compression,'"')))
-
-# show which systemd services will be enabled, disabled, masked
-print("".join(("Enabled services: ",", ".join(args.systemd_enable))))
-print("".join(("Disabled services: ",", ".join(args.systemd_disable))))
-print("".join(("Masked services: ",", ".join(args.systemd_mask))))
-
-# show which extra packages are selected for installation
-print("".join(("Extra packages: ",", ".join((args.extra_packages)))))
-
-# display flags; variables that will be set to true in execution that signal
-# to the script to install certain package groups or run specific functions.
-print("".join(("Flags: ",", ".join((args.flags)))))
-
-# show which function scripts will be imported
-print("".join(("Scripts: ",", ".join(["".join(('"',str(x),'"')) for x in args.scripts]))))
-
-# show which firmware packages are selected for installation
-print("".join(("Firmware packages: ",", ".join(args.firmware))))
-
-# show the directories or tarballs that will be written into the root of the
-print("".join(("Copy to root: ",", ".join(["".join(('"',str(x),'"')) for x in args.copy_to_root]))))
+# Show all options
+for i,x in opts.items():
+	print("".join(('\33[1m',i.capitalize().replace('_',' '),':\33[0m ',display_item(x))))
 print()
 
 # add export message if export provided
@@ -372,57 +389,12 @@ for i in args.export,args.export_bash:
 		print("".join(('The above options will be exported to: "',str(i),'"')))
 prompt_continue()
 
-# keep old path string in case of --export-bash
-path_str=args.path
-
-# expand paths of script, build directory and mkinitcpio directory
-for x in 'path','build_dir','mkinitcpio_dir','export','export_bash':
-	if args.__getattribute__(x):
-		args.__setattr__(x,Path(args.__getattribute__(x)).expanduser().absolute())
-
-# expand output directory
-# if none provided, output dir is ${build_dir}/output
-if args.output_dir:
-	args.output_dir = Path(args.output_dir).expanduser().absolute()
-else:
-	args.output_dir = "".join((str(args.build_dir),"/output"))
-
-# create dictionary with all options
-opts = {
-	"yay": args.yay,
-	"user": args.user,
-	"no_root_passwd": args.no_root_passwd,
-	"timezone": args.timezone,
-	"hostname": args.hostname,
-	"keymap": args.keymap,
-	"shell": args.shell,
-	"root_shell": args.root_shell,
-	"compression": args.compression,
-	"systemd_enable": args.systemd_enable,
-	"systemd_disable": args.systemd_disable,
-	"systemd_mask": args.systemd_mask,
-	"extra_packages": args.extra_packages,
-	"flags": args.flags,
+# replace Paths with strings
+opts.update({
 	"scripts": [str(x) for x in args.scripts],
-	"firmware": args.firmware,
 	"copy_to_root": [str(x) for x in args.copy_to_root],
-	"mkinitcpio": args.mkinitcpio,
-	"mkinitcpio_modules": args.mkinitcpio_modules,
-	"mkinitcpio_binaries": args.mkinitcpio_binaries,
-	"mkinitcpio_files": args.mkinitcpio_files,
-	"mkinitcpio_hooks": args.mkinitcpio_hooks,
-	"mkinitcpio_passwd": args.mkinitcpio_passwd,
-	"mkinitcpio_cmdline_blacklist": args.mkinitcpio_cmdline_blacklist,
-	"mkinitcpio_dir": str(args.mkinitcpio_dir),
-	"no_patch": args.no_patch,
-	"only_mkinitcpio": args.only_mkinitcpio
-}
-
-# create function for checking illegal characters
-def validate_opt(i,n):
-	if not (set(i).isdisjoint('$()[]|;<>') and set((n)).isdisjoint('$()[]|;<>')):
-		sys.exit("".join(("Following pair contains illegal characters: ",i,"=",n)))
-	return n
+	"mkinitcpio_dir": str(args.mkinitcpio_dir)
+})
 
 # export options to a json file
 if args.export:
@@ -438,6 +410,12 @@ if args.export:
 # remove flags array
 opts.pop('flags')
 
+# create function for checking illegal characters
+def validate_opt(i,n):
+	if not (set(i).isdisjoint('$()[]|;<>') and set((n)).isdisjoint('$()[]|;<>')):
+		sys.exit("".join(("Following pair contains illegal characters: ",i,'="',n,'"')))
+	return n
+
 # export options as a bash script
 if args.export_bash:
 	# check if file exists, ask to overwrite if it does
@@ -452,7 +430,7 @@ if args.export_bash:
 			return validate_opt(i,"".join(('"',str(x),'"')))
 	# create main part of script
 	exports="\n".join(["".join((i,'=',parse_object(i,x))) for i,x in opts.items() if i != "flags"])
-	flags="\n".join(["".join((x,'=true')) for x in args.flags])
+	flags="\n".join(["".join((validate_opt('flag',x),'=true')) for x in args.flags])
 	# open file for writing
 	with open(args.export_bash,'w') as file:
 		# write header

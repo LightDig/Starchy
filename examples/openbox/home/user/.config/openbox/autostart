@@ -1,0 +1,19 @@
+# Programs that will run after Openbox has started
+
+# set touchpad behaviour
+synclient VertEdgeScroll=1 HorizEdgeScroll=1 TapButton1=1 VertScrollDelta=-29 HorizScrollDelta=-29 TapButton2=3 TapButton3=2 &
+
+# start policy kit
+lxqt-policykit-agent &
+
+# wallpaper
+hsetroot -full /home/alex/.config/openbox/backgrounds/volcano.png &
+
+# set up xcape
+xcape -e 'Super_L=Super_L|space' &
+
+# init notifacion server
+dunst &
+
+# panel
+polybar &

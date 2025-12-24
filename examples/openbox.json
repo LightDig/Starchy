@@ -1,0 +1,56 @@
+{
+  "yay": "",
+  "user": "john",
+  "no_root_passwd": false,
+  "timezone": "Europe/Berlin",
+  "hostname": "dell-alex",
+  "keymap": "de-latin1",
+  "user_shell": "zsh",
+  "root_shell": "bash",
+  "compression": "-comp xz -no-exports -b 256K",
+  "systemd_enable": [
+    "slock@alex"
+  ],
+  "systemd_disable": [],
+  "systemd_mask": [
+    "hibernate.target"
+  ],
+  "extra_packages": [
+    "sof_firmware",
+    "brightnessctl"
+  ],
+  "flags": [
+    "populate"
+  ],
+  "scripts": [
+    "/home/alex/SynologyDrive/projects/Starchy/examples/openbox.sh"
+  ],
+  "firmware": [
+    "linux-firmware"
+  ],
+  "copy_to_root": [
+    "/home/alex/SynologyDrive/projects/Starchy/examples/openbox"
+  ],
+  "mkinitcpio": true,
+  "mkinitcpio_modules": [
+    "vfat"
+  ],
+  "mkinitcpio_binaries": [],
+  "mkinitcpio_files": [],
+  "mkinitcpio_hooks": [
+    "base",
+    "microcode",
+    "keyboard",
+    "keymap",
+    "autodetect",
+    "udev",
+    "block",
+    "squashfs",
+    "patch"
+  ],
+  "mkinitcpio_passwd": "",
+  "mkinitcpio_cmdline_blacklist": [],
+  "mkinitcpio_dir": "/home/alex/SynologyDrive/projects/Starchy/initcpio",
+  "no_patch": false,
+  "only_mkinitcpio": false
+}
