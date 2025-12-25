@@ -23,7 +23,7 @@
 # USE THIS SCRIPT AT YOUR OWN RISK
 # RUN AS ROOT
 # ALWAYS RUN WITH BASH OR RISK BREAKING YOUR SYSTEM
-# PRODUCES IMAGE AT ${wdir}.sfs
+# PRODUCES IMAGE AT ${odir}/system.sfs
 # READ THROUGH SCRIPT AND/OR DOCUMENTATION BEFORE RUNNING
 
 # it is recommended to use a wrapper, such as the provided python
@@ -219,18 +219,15 @@ pacstrap -K "$root" \
 	$([[ $media = true ]] && echo ${p_media[@]})
 
 ## copy kernel modules from host into system
-mkdir "$wdir/lib/modules"
-cp -r "/lib/modules/$(uname -r)" "$wdir/lib/modules/."
+mkdir "$root/lib/modules"
+cp -r "/lib/modules/$(uname -r)" "$root/lib/modules/."
+[[ ! $no_rm_kernel_build_dir = true ]] && rm -rf "$root"/lib/modules/*/{build,vdso}
 
 # copy yay package files into system
 [[ $yay ]] && bash -c "cd $yay && cp *.pkg\.tar\.zst $root/."
 
 # ### PRECONFIG ###
 pre_chroot
-
-chmod 660 "$root/etc/sudoers"
-echo "Defaults lecture = never" >> "$root/etc/sudoers"
-chmod 440 "$root/etc/sudoers"
 
 # copy tarball or folder into the root directory before running chroot
 for i in "${copy_to_root[@]}"; do
@@ -242,16 +239,10 @@ for i in "${copy_to_root[@]}"; do
 	fi
 done
 
-# ### ARCH-CHROOT ###
+# ### ARCH-CHROOT AND BASIC CONFIG ###
 arch-chroot "$root" <<EOF
 # install yay
 [[ "$yay" ]] && pacman -U yay-* --noconfirm
-
-# set system's hostname
-echo '$hostname' > /etc/hostname
-
-# set tty font
-echo 'KEYMAP=$keymap' > /etc/vconsole.conf
 
 # update locale.gen to include American English
 sed -Ei "s/^#(en_US.UTF-8)/\1/" /etc/locale.gen
@@ -261,13 +252,7 @@ locale-gen
 echo 'LANG=en_US.UTF-8' > /etc/locale.conf
 
 # set password for root
-if [[ ! "$no_root_passwd" = true ]]; then
-	echo "Set password for root"
-	passwd
-fi
-
-# make sudo use wheel group
-sed -Ei 's/# (%wheel ALL=\(ALL:ALL\) ALL)/\1/' /etc/sudoers
+[[ ! "$no_root_passwd" = true ]] && passwd
 
 # add user and ask for password
 useradd -mG wheel $user
@@ -280,10 +265,22 @@ systemctl mask tmp.mount ${sd_mask[*]}
 
 ## shell
 # change shell of the default user
-[[ "$shell" ]] && chsh --shell /usr/bin/$shell $user
+[[ "$shell" ]] && chsh --shell \$(which "$shell") $user
 EOF
 
-# ### REMAINING SETUP ###
+## Remaining setup
+
+# set system's hostname
+echo "$hostname" > "$root/etc/hostname"
+
+# set tty font
+echo "KEYMAP=$keymap" > "$root/etc/vconsole.conf"
+
+# make sudo use wheel group and never prompt password
+sed -Ei 's/# (%wheel ALL=\(ALL:ALL\) ALL)/\1/' "$root/etc/sudoers"
+chmod 660 "$root/etc/sudoers"
+echo "Defaults lecture = never" >> "$root/etc/sudoers"
+chmod 440 "$root/etc/sudoers"
 
 if ! ls "$root/local/share/zoneinfo/$timezone" &> /dev/null; then
 	echo
@@ -354,6 +351,9 @@ chown -R 1000:1000 "$root/home/$user"
 rm "$src"/var/cache/pacman/pkg/*
 [[ $yay ]] && rm "$src"/yay-*
 
+# remove guile cache
+[[ ! $no_rm_guile_cache = true ]] && rm -rf "$root"/usr/lib/guile/*/ccache/*
+
 # remove all locales except en and en_US
 sh -c "cd $src/usr/share/locale && rm -rf \$(ls | grep -vE \"^en$|^en_US$|^locale\.alias$\")"
 
@@ -376,9 +376,9 @@ rm -f "$root/usr/share/libalpm/*/*mkinitcpio*"
 
 # ### SQUASH SYSTEM ###
 
-mksquashfs "$root"/ "$odir/recovery.sfs" "$compression"
+mksquashfs "$root"/ "$odir/system.sfs" "$compression"
 
-fi # script continues here if $only_mkinitcpio is true
+fi # script continues here if $only_mkinitcpio = true
 
 # ### INITRAMFS ###
 
@@ -407,6 +407,7 @@ mount -t tmpfs initcpio "$wdir/initcpio"
 # copy mkinitcpio hooks into temporary directory
 cp "$mdir"/{hooks,install,post} "$wdir/initcpio/"
 
+if [[ ! $mkinitcpio_vanilla_hooks = true ]]; then # skip the following section for $mkinitcpio_vanilla_hooks = true
 # check if password hash has been provided, set up password hook with hash
 if [[ $mkinitcpio_passwd_hash ]]; then
 	# place the hash in the file
@@ -433,14 +434,20 @@ mount -t overlay hooks -o "lowerdir=/etc/initcpio:$wdir/initcpio" /etc/initcpio
 
 echo "$mkinitcpio_conf" > "$wdir/initcpio/mkinitcpio.conf"
 
+fi # end if for $mkinitcpio_vanilla_hooks != true
+
 mkinitcpio --config "$wdir/initcpio/mkinitcpio.conf" --generate "$odir/initramfs.img"
+
+if [[ ! $mkinitcpio_vanilla_hooks ]]; then
 
 # remove overlays
 umount /etc/initcpio/hooks
 umount /etc/initcpio/install
 umount "$wdir/initcpio"
 
-fi
+fi # end if for $mkinitcpio_vanilla_hooks != true
+
+fi # end if for $mkinitcpio = true
 
 # ### DONE ###
 echo "FINISHED -- GOTO $odir/"

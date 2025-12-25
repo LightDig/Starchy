@@ -5,8 +5,8 @@
   "timezone": "Europe/Berlin",
   "hostname": "dell-alex",
   "keymap": "de-latin1",
-  "user_shell": "zsh",
-  "root_shell": "bash",
+  "user_shell": "/usr/bin/zsh",
+  "root_shell": "/usr/bin/bash",
   "compression": "-comp xz -no-exports -b 256K",
   "systemd_enable": [
     "slock@alex"
