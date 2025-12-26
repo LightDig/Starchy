@@ -25,12 +25,14 @@ pre_pacstrap() {
 
 	# register packages if needed
 	[[ $openbox = true ]] && extra_packages+=("${p_openbox[@]}")
-	[[ $shell = zsh ]] && extra_packages+=("${p_zsh[@]}")
+	[[ $user_shell = zsh ]] && extra_packages+=("${p_zsh[@]}")
+}
+
+pre_chroot() {
+	mv "$root/home/user" "$root/home/$user"
 }
 
 post_chroot() {
-	mv "$root/home/user" "$root/home/$user"
-
 	# Download and modify dunstrc example from dikiaap/dotfiles
 	wget https://raw.githubusercontent.com/dikiaap/dotfiles/master/.dunst/dunstrc -O "$root/home/$user/.config/dunst/dunstrc"
 	sed -Ei 's/Paper/AdwaitaLegacy/g' "$root/home/$user/.config/dunst/dunstrc"
@@ -78,17 +80,12 @@ ExecStart=/usr/bin/slock
 WantedBy=sleep.target
 EOF
 
-	arch-chroot "$root" <<EOF
-# Enable slock service
-[[ $openbox ]] && echo "systemctl enable slock@$user"
+	# Enable slock service if openbox is installed
+	[[ $openbox ]] && systemctl --root "$root" enable "slock@$user"
 
-# set up shell
-if [[ "$shell" = zsh ]]; then
-	# install zsh-syntax-highlighting and zsh-autosuggestions plugins
-	sudo -u "$user" sh -c "\$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
-	sudo -u "$user" sh -c "cd ~/.oh-my-zsh/plugins && git clone https://github.com/zsh-users/zsh-syntax-highlighting.git && git clone https://github.com/zsh-users/zsh-autosuggestions"
-fi
-EOF
+	# Install oh-my-zsh, pass --unattended to install script and modify script to replace $HOME with $(pwd), then install syntax highlighting and autosuggestions
+	KEEP_ZSHRC=yes bash -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | sed "s/^HOME=.*/HOME=\"$(echo "$root/home/$user" | sed 's/\//\\\//g')\"/")" "" --unattended
+	bash -c "cd \"$root/home/$user/.oh-my-zsh/plugins\" && git clone https://github.com/zsh-users/zsh-syntax-highlighting.git && git clone https://github.com/zsh-users/zsh-autosuggestions"
 
 	# clear dotfiles in homes
 	rm -rf "$root"/root/.*

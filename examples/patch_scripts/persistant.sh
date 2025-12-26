@@ -30,7 +30,7 @@ mkdir /new_root/persistant
 [[ ! -d $patch/persistant/home ]] && mkdir -p "$patch/persistant/home"
 [[ ! -d $patch/persistant/NetworkManager ]] && mkdir -p "$patch/persistant/NetworkManager"
 mount --bind $patch/persistant /new_root/persistant
-for i in $(ls /new_root/home/); do
+for i in $(basename /new_root/home/*); do
 	if [[ ! -d "$patch/persistant/home/$i" ]]; then
 		ugid=$(ls -dn /new_root/home/$i | awk '{print($3,$4)}' | tr ' ' ':')
 		mkdir -m 750 $patch/persistant/home/$i

@@ -66,8 +66,8 @@ if [[ -z $BASH_VERSION ]]; then
 fi
 
 # ensure that arch-chroot and pacstrap are available on system
-if ! command -v arch-chroot > /dev/null || ! command -v pacstrap > /dev/null; then
-	echo "'arch-chroot' and 'pacstrap' are required by this script!"
+if ! command -v pacstrap > /dev/null; then
+	echo "'arch-chroot' is required by this script!"
 	echo "Please install 'extra/arch-install-scripts'."
 	quit=true
 fi
@@ -79,6 +79,12 @@ if ! command -v mksquashfs > /dev/null; then
 	quit=true
 fi
 
+if [[ $mkinitcpio = true ]] && ! command -v mkinitcpio > /dev/null; then
+	echo "Command 'mkinitcpio' not present on system"
+	echo "Initramfs generation will be skipped!"
+	mkinitcpio=false
+fi
+
 # if any errors occured, exit now
 [[ $quit = true ]] && exit 1
 
@@ -88,7 +94,7 @@ fi
 ## build options
 [[ -z $wdir ]] && wdir=/tmp/recovery
 [[ -z $odir ]] && odir="$wdir/output"
-root=$wdir/system/root
+root=$wdir/system
 
 ## standard options
 [[ -z $user ]] && user=john # username of unprivileged user
@@ -115,23 +121,12 @@ root=$wdir/system/root
 
 ## ARRAYS
 # process arrays from python wrapper
-for i in $sd_enable_arr; do sd_enable+=("$(echo "$i" | tr '\33' ' ')"); done
-for i in $sd_disable_arr; do sd_disable+=("$(echo "$i" | tr '\33' ' ')"); done
-for i in $sd_mask_arr; do sd_mask+=("$(echo "$i" | tr '\33' ' ')"); done
-for i in $extra_packages_arr; do extra_packages+=("$(echo "$i" | tr '\33' ' ')"); done
-for i in $scripts_arr; do scripts+=("$(echo "$i" | tr '\33' ' ')"); done
-for i in $firmware_arr; do linux_firmware+=("$(echo "$i" | tr '\33' ' ')"); done
-for i in $copy_to_root_arr; do copy_to_root+=("$(echo "$i" | tr '\33' ' ')"); done
-
-# set default arrays if none are provided from a wrapper
-# check that all arrays are set, otherwise set their default values
-! declare -p sd_enable &> /dev/null && sd_enable=()
-! declare -p sd_disable &> /dev/null && sd_disable=()
-! declare -p sd_mask &> /dev/null && sd_mask=(hibernate.target)
-! declare -p extra_packages &> /dev/null && extra_packages=()
-! declare -p scripts &> /dev/null && scripts=()
-! declare -p firmware &> /dev/null && firmware=()
-! declare -p copy_to_root &> /dev/null && copy_to_root=()
+AD=$(echo -e "\e")
+arrays=(sd_enable sd_disable sd_mask extra_packages scripts firmware copy_to_root)
+for x in "${arrays[@]}"; do
+	DA="$x"_arr
+	IFS=$AD read -ra "${x?}" <<< "${!DA}"
+done
 
 # set vars relating to initramfs
 [[ -z $mdir ]] && mdir=$(pwd)/initcpio # dir with extra initcpio hooks
@@ -175,8 +170,9 @@ fi
 
 ## prepare dirs for building the image
 [[ ! -d "$(dirname "$wdir")" ]] && echo "\"$(dirname "$wdir")\": folder does not exist" && exit 1
-mkdir -p "$root" # $wdir/system/root
-chmod 750 "$wdir/system" # don't allow other users to spy on our system
+mkdir -p "$root" # $wdir/system
+mkdir -p "$odir"
+chmod 750 "$wdir" # don't allow other users to spy on our system
 
 # build yay if user is set for building
 if [[ $yay ]]; then
@@ -194,7 +190,7 @@ fi
 # you are encouraged to modify these lists to your needs
 
 # packages to always install
-base=(base vim zip unzip less pacman-contrib usbutils cryptsetup zstd strace which tree pciutils ethtool hwdetect dmidecode lm_sensors htop btop lsof git kmod wget locate)
+base=(base vim zip unzip less pacman-contrib usbutils cryptsetup zstd strace which tree pciutils ethtool hwdetect dmidecode lm_sensors htop btop lsof git kmod wget locate sudo)
 
 p_recovery=(arch-install-scripts efibootmgr squashfs-tools btrfs-progs e2fsprogs dosfstools exfatprogs ntfs-3g grub mokutil sbsigntools)
 
@@ -214,9 +210,10 @@ pacstrap -K "$root" \
 	${base[@]} \
 	${extra_packages[@]} \
 	${linux_firmware[@]} \
+	$([[ $recovery ]] && echo ${p_recovery[@]}) \
 	$([[ $yay ]] && echo ${p_yay[@]}) \
 	$([[ $network = true ]] && echo ${p_network[@]}) \
-	$([[ $media = true ]] && echo ${p_media[@]})
+	$([[ $media = true ]] && echo ${p_media[@]}) \
 
 ## copy kernel modules from host into system
 mkdir "$root/lib/modules"
@@ -226,49 +223,54 @@ cp -r "/lib/modules/$(uname -r)" "$root/lib/modules/."
 # copy yay package files into system
 [[ $yay ]] && bash -c "cd $yay && cp *.pkg\.tar\.zst $root/."
 
-# ### PRECONFIG ###
-pre_chroot
-
 # copy tarball or folder into the root directory before running chroot
 for i in "${copy_to_root[@]}"; do
 	echo "copying $i to root directory..."
 	if [[ -f "$i" ]]; then
 		tar -xf "$i" -C "$root/"
 	else
-		cp -r "$i" "$root/"
+		cp -r "$i"/* "$root/"
 	fi
 done
 
-# ### ARCH-CHROOT AND BASIC CONFIG ###
-arch-chroot "$root" <<EOF
-# install yay
-[[ "$yay" ]] && pacman -U yay-* --noconfirm
+# ### PRECONFIG ###
+pre_chroot # which is no rather the pre-SYSTEM SETUP function as a proper chroot no longer occurs
+
+# ### SYSTEM SETUP ###
+# This used to be handled in a proper chroot but that
+# caused some issues
+
+if [[ ! $no_root_passwd = true ]]; then
+	echo "Changing password of user root"
+	while true; do passwd -R "$root" && break; done # set root password
+fi
+
+useradd -R "$root" -mG wheel "$user"
+echo "Changing password of user $user"
+while true; do passwd -R "$root" "$user" && break; done # set user password
 
 # update locale.gen to include American English
-sed -Ei "s/^#(en_US.UTF-8)/\1/" /etc/locale.gen
+sed -Ei "s/^#(en_US.UTF-8)/\1/" "$root/etc/locale.gen"
+echo -e "LANG=en_US.UTF-8\nLC_ALL=en_US.UTF-8" > "$root/etc/locale.conf"
 
-# Generate locales and set default locale
-locale-gen
-echo 'LANG=en_US.UTF-8' > /etc/locale.conf
+# Generate english locales
+I18NPATH="$root/usr/share/i18n/" localedef --prefix="$root" -i en_US -f UTF-8 "$root/usr/share/locale/en_US"
 
-# set password for root
-[[ ! "$no_root_passwd" = true ]] && passwd
+[[ $systemd_enable ]] && systemctl --root "$root" enable ${systemd_enable[@]}
+[[ $systemd_disable ]] && systemctl --root "$root" disable ${systemd_disable[@]}
+[[ $systemd_mask ]] && systemctl --root "$root" mask ${systemd_mask}
 
-# add user and ask for password
-useradd -mG wheel $user
-echo "Set password for $user"
-passwd $user
+systemctl --root "$root" mask tmp.mount
+[[ $autologin ]] && systemctl --root "$root" enable greetd
 
-# set up system services and disable mounting /tmp as seperate tmpfs
-[[ "$autologin" ]] && systemctl enable greetd
-systemctl mask tmp.mount ${sd_mask[*]}
+# install yay
+[[ $yay ]] && pacman -r "$root" -U yay-*.pkg.tar.zst
 
-## shell
-# change shell of the default user
-[[ "$shell" ]] && chsh --shell \$(which "$shell") $user
-EOF
+# Change user shell
+sed -Ei "s/(^$user:x:.*)\/usr\/bin\/bash/\1$(echo "$user_shell" | sed 's/\//\\\//g')/" "$root/etc/passwd"
 
-## Remaining setup
+# Change root shell
+sed -Ei "s/(^root:x:.*)\/usr\/bin\/bash/\1$(echo "$root_shell" | sed 's/\//\\\//g')/" "$root/etc/passwd"
 
 # set system's hostname
 echo "$hostname" > "$root/etc/hostname"
@@ -282,7 +284,7 @@ chmod 660 "$root/etc/sudoers"
 echo "Defaults lecture = never" >> "$root/etc/sudoers"
 chmod 440 "$root/etc/sudoers"
 
-if ! ls "$root/local/share/zoneinfo/$timezone" &> /dev/null; then
+if ! ls "$root/usr/share/zoneinfo/$timezone" &> /dev/null; then
 	echo
 	echo Your selected timezone \"$timezone\" does not appear to be available on the system!
 	echo If you\'d like, you may type in a new time zone and check if it is valid.
@@ -291,7 +293,7 @@ if ! ls "$root/local/share/zoneinfo/$timezone" &> /dev/null; then
 		read -rp '> ' timezone
 		if [[ "$timezone" = continue ]]; then
 			break
-		elif ls "$root/local/share/zoneinfo/$timezone" &> /dev/null; then
+		elif ls "$root/usr/share/zoneinfo/$timezone" &> /dev/null; then
 			ln -sf "/usr/share/zoneinfo/$timezone" "$root/etc/localtime"
 			break
 		else
@@ -301,7 +303,14 @@ if ! ls "$root/local/share/zoneinfo/$timezone" &> /dev/null; then
 fi
 
 # Populate home folders if needed
-[[ $populate = true ]] && mkdir "$root"/home/*/{Downloads,Documents,Pictures,Videos,Music,Applications}
+if [[ $populate = true ]]; then
+	for i in "$root"/home/*; do
+		mkdir "$i"/{Downloads,Documents,Pictures,Videos,Music,Applications}
+	done
+fi
+
+# populate root home folder if needed
+[[ $populate_root = true ]] && mkdir "$root"/root/{Downloads,Documents,Pictures,Videos,Music,Applications}
 
 # enable autologin on boot if selected
 [[ $autologin = true ]] && cat <<EOF > "$root/etc/greetd/config.toml"
@@ -315,7 +324,7 @@ vt = 1
 
 # \`agreety\` is the bundled agetty/login-lookalike. You can replace \`/bin/sh\`
 # with whatever you want started, such as \`sway\`.
-command = "agreety --cmd $shell"
+command = "agreety --cmd $user_shell"
 
 # The user to run the command as. The privileges this user must have depends
 # on the greeter. A graphical greeter may for example require the user to be
@@ -323,7 +332,7 @@ command = "agreety --cmd $shell"
 user = "$user"
 
 [initial_session]
-command = "$shell"
+command = "$user_shell"
 user = "$user"
 EOF
 
@@ -348,14 +357,14 @@ post_chroot
 chown -R 1000:1000 "$root/home/$user"
 
 # clear pacman cache as well as yay package files
-rm "$src"/var/cache/pacman/pkg/*
-[[ $yay ]] && rm "$src"/yay-*
+rm "$root"/var/cache/pacman/pkg/*
+[[ $yay ]] && rm "$root"/yay-*
 
 # remove guile cache
 [[ ! $no_rm_guile_cache = true ]] && rm -rf "$root"/usr/lib/guile/*/ccache/*
 
 # remove all locales except en and en_US
-sh -c "cd $src/usr/share/locale && rm -rf \$(ls | grep -vE \"^en$|^en_US$|^locale\.alias$\")"
+sh -c "cd $root/usr/share/locale && rm -rf \$(ls | grep -vE \"^en$|^en_US$|^locale\.alias$\")"
 
 # create pacman hook to clear cache after every install
 # This doesn't work in its current form because it causes problems with yay
@@ -376,7 +385,7 @@ rm -f "$root/usr/share/libalpm/*/*mkinitcpio*"
 
 # ### SQUASH SYSTEM ###
 
-mksquashfs "$root"/ "$odir/system.sfs" "$compression"
+mksquashfs "$root"/ "$odir/system.sfs" $compression
 
 fi # script continues here if $only_mkinitcpio = true
 

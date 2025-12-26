@@ -107,25 +107,29 @@ parser.add_argument('-e','--systemd-enable',
 	nargs="*",
 	type=str,
 	help="Systemd services to enable",
-	metavar="SERVICES"
+	metavar="SERVICES",
+	dest="sd_enable_arr"
 )
 parser.add_argument('-d','--systemd-disable',
 	nargs="*",
 	type=str,
 	help="Systemd services to disable",
-	metavar="SERVICES"
+	metavar="SERVICES",
+	dest="sd_disable_arr"
 )
 parser.add_argument('-m','--systemd-mask',
 	nargs='*',
 	type=str,
 	help="What systemd services to mask (Default = hibernate.target)",
-	metavar="SERVICES"
+	metavar="SERVICES",
+	dest="sd_mask_arr"
 )
 parser.add_argument('-x','--extra-packages',
 	nargs='*',
 	type=str,
 	help="Extra packages to include",
-	metavar="PACKAGES"
+	metavar="PACKAGES",
+	dest="extra_packages_arr"
 )
 parser.add_argument('-f','--flags',
 	nargs='*',
@@ -135,19 +139,22 @@ parser.add_argument('-f','--flags',
 parser.add_argument('-S','--scripts',
 	nargs='*',
 	type=str,
-	help="Path of script with functions to be executed at certain times during the build process"
+	help="Path of script with functions to be executed at certain times during the build process",
+	dest="scripts_arr"
 )
 parser.add_argument('-F','--firmware',
 	nargs='*',
 	type=str,
 	help="Which firmware packages to add (Default = linux-firmware)",
-	metavar="FIRMWARE"
+	metavar="FIRMWARE",
+	dest="firmware_arr"
 )
 parser.add_argument('-C','--copy-to-root','--copy-to-root',
 	nargs="*",
 	type=str,
 	help="Which directories or tarballs to write into the root of the system in order",
-	metavar="SOURCES"
+	metavar="SOURCES",
+	dest="copy_to_root_arr"
 )
 parser.add_argument('-M','-I','--mkinitcpio','--initramfs',
 	action='store_const',
@@ -293,15 +300,15 @@ default_opts = {
 	"keymap": host_keymap,
 	"user_shell": "/usr/bin/bash",
 	"root_shell": None,
-	"compression": "-comp -zstd",
-	"systemd_enable": [],
-	"systemd_disable": [],
-	"systemd_mask": ["hibernate.target"],
-	"extra_packages": [],
+	"compression": "-comp zstd",
+	"sd_enable_arr": [],
+	"sd_disable_arr": [],
+	"sd_mask_arr": ["hibernate.target"],
+	"extra_packages_arr": [],
 	"flags": [],
-	"scripts": [],
-	"firmware": ["linux-firmware"],
-	"copy_to_root": [],
+	"scripts_arr": [],
+	"firmware_arr": ["linux-firmware"],
+	"copy_to_root_arr": [],
 	"mkinitcpio": False,
 	"mkinitcpio_modules": ["vfat"],
 	"mkinitcpio_binaries": [],
@@ -360,7 +367,7 @@ categories = [opts, settings]
 for source,category in zip(sources,categories): # loop through sources bundled with categories
 	for options in source: # loop through each dictionary in given source
 		for index,item in category.items(): # loop through the key/value pairs of each dictionary
-			if index in category: # check if option is supported by the category (opts/settings)
+			if index in options: # check if option is supported by the category (opts/settings)
 				if item is Placeholder: # check if item is placeholder value
 					category[index]=options[index] # replace placeholder value with real value
 				elif item is Switch: # check if item is a Switch object
@@ -377,9 +384,9 @@ for category in categories:
 # TODO find it
 
 # ### EXPAND SETTINGS PATHS + EXPORT SETTINGS ###
-# keep an unexpanded path string if a bash script export needs to take place
-if settings["export_bash"]:
-	path_str=settings["path"]
+# keep an unexpanded path strings for exports
+unexpanded = settings.copy()
+unexpanded.update({'mkinitcpio_dir': opts['mkinitcpio_dir'], 'scripts_arr': opts['scripts_arr'], 'copy_to_root_arr': opts['copy_to_root_arr']})
 
 # expand paths in settings
 for x in settings:
@@ -421,19 +428,19 @@ if opts['mkinitcpio_dir']:
 	opts['mkinitcpio_dir'] = Path(opts['mkinitcpio_dir']).expanduser().absolute()
 
 # expand path lists in opts
-for x in 'scripts','copy_to_root':
+for x in 'scripts_arr','copy_to_root_arr':
 	if opts[x]:
 		opts[x] = [Path(y).expanduser().absolute() for y in opts[x]]
 
 # Scripts
 # check that provided scripts exists
-for x in opts["scripts"]:
+for x in opts["scripts_arr"]:
 	if not x.is_file():
 		sys.exit("".join(('Script file \33[33m"',str(x),'"\33[0m does not exist!')))
 
 # Copy to root
 # check that tarballs/folders exist
-for x in opts["copy_to_root"]:
+for x in opts["copy_to_root_arr"]:
 	if not x.exists():
 		sys.exit("".join(('File/folder \33[33m"',str(x),'"\33[0m does not exist!')))
 
@@ -453,10 +460,13 @@ if opts["mkinitcpio_passwd"] != "":
 	opts["mkinitcpio_hooks"].insert(args.mkinitcpio_hooks.index(hook_before_passwd)+1,"passwd")
 
 ## Flags
+# Replace dashes in flags with underscores
+opts["flags"] = [x.replace('-','_') for x in opts["flags"]]
+
 # list of flags that may not be set using the -f option
 illegal_flags = {"wdir","odir","mdir","yay","user","no_root_passwd","timezone","hostname","keymap",
 	"user_shell","root_shell","compression","sd_enable_arr","sd_disable_arr","sd_mask_arr","root"
-	"extra_packages_arr","scripts_arr","firmware_arr","copy_to_root_arr","sd_enable","linux_firmware",
+	"extra_packages_arr","scripts_arr","firmware_arr","copy_to_root_arr","sd_enable",
 	"sd_disable","sd_mask","extra_packages","scripts","firmware","copy_to_root","warning","quit",
 	"mkinitcpio_conf","p_network","p_media","p_yay"
 }
@@ -519,9 +529,9 @@ prompt_continue()
 
 # replace Paths with strings
 opts.update({
-	"scripts": [str(x) for x in opts["scripts"]],
-	"copy_to_root": [str(x) for x in opts["copy_to_root"]],
-	"mkinitcpio_dir": str(opts["mkinitcpio_dir"])
+	"scripts_arr": unexpanded["scripts_arr"],
+	"copy_to_root_arr": unexpanded["copy_to_root_arr"],
+	"mkinitcpio_dir": unexpanded["mkinitcpio_dir"]
 })
 
 # export options to a json file
@@ -563,7 +573,7 @@ if settings["export_bash"]:
 		file.write("\n\n# Flags\n")
 		file.write(flags) # write flags
 		# write section to source script
-		file.write("".join(('\n\n# Run script\nif [[ -f "',path_str,'" ]]; then\n\tsource "',path_str,'"\nelse\n\techo Script not found!\n\texit 1\nfi')))
+		file.write("".join(('\n\n# Run script\nif [[ -f "',unexpanded["path"],'" ]]; then\n\tsource "',unexpanded["path"],'"\nelse\n\techo Script not found!\n\texit 1\nfi')))
 	# make file executable
 	settings["export_bash"].chmod(0o755)
 	sys.exit()
@@ -571,7 +581,7 @@ if settings["export_bash"]:
 # Function to turn list into a 0x1b separated array that can later be turned back into a bash array
 # null separation throws an Exception in bash :/
 def script_array(array):
-	return " ".join([x.replace(' ','\33') for x in array])
+	return "\33".join(array)
 
 # create function for turning options into environment variables
 def envify(i,x):
@@ -592,11 +602,11 @@ env.update({'warning':'false'})
 
 # Add flags seperately to array
 env.update({x:"true" for x in opts["flags"]})
+env.pop("flags")
 
 print("\n---\n")
 if settings["path"].is_file():
-#	subprocess.run(('sudo','bash',settings["path"]),env=env)
-	subprocess.run(('echo','Not ready yet'),env=env)
+	subprocess.run(('bash',settings["path"]),env=env)
 else:
 	print("".join(('Could not find build script at: "',str(settings["path"]),'"')))
 	sys.exit(1)

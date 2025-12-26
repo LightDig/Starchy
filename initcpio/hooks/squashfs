@@ -143,15 +143,15 @@ main() {
 
 run_hook() {
 	if [[ -n $squashfs ]]; then
-		if ! main; then
-			echo
-			echo "Failed mounting SquashFS with tmpfs overlay"
-		else
+		if main; then
 			# remember squashfs device path
 			s_dev=$dev
 
 			# set mount handler
 			mount_handler=make_overlay
+		else
+			echo
+			echo "Failed mounting SquashFS with tmpfs overlay"
 		fi
 	fi
 }
@@ -166,19 +166,10 @@ Description=Poweroff when device is unplugged
 
 [Service]
 Before=sysinit.target
-ExecStart=/usr/bin/bash /sfs/unplug_poweroff.sh
+ExecStart=/usr/bin/bash -c "while true; do ls '$s_dev' &> /dev/null || echo _so > /proc/sysrq-trigger; sleep 1; done"
 
 [Install]
 WantedBy=sysinit.target
-EOF
-	cat <<EOF > /new_root/sfs/unplug_poweroff.sh
-#!/usr/bin/bash
-while true; do
-	if ! ls "$s_dev" &> /dev/null; then
-		echo _so > /proc/sysrq-trigger
-	fi
-	sleep 1
-done
 EOF
 	[[ ! -d /new_root/etc/systemd/system/sysinit.target.wants ]] && mkdir /new_root/etc/systemd/system/sysinit.target.wants
 	ln -sf /etc/systemd/system/unplug_poweroff.service /new_root/etc/systemd/system/sysinit.target.wants/

@@ -40,7 +40,7 @@ It is possible to run this script from the official Arch installation medium if 
 **Package requirements**
 |Package|Use|
 |-|-|
-|`arch-install-scripts`|To pacstrap and chroot the system|
+|`arch-install-scripts`|To pacstrap the system|
 |`squashfs-tools`|Make the SquashFS file|
 |`mkinitcpio`|Build the initramfs|
 |`python`|For running the wrapper script|

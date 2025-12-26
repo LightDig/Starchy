@@ -7,29 +7,28 @@
   "keymap": "de-latin1",
   "user_shell": "/usr/bin/zsh",
   "root_shell": "/usr/bin/bash",
-  "compression": "-comp xz -no-exports -b 256K",
-  "systemd_enable": [
-    "slock@alex"
-  ],
-  "systemd_disable": [],
-  "systemd_mask": [
+  "compression": "-comp xz",
+  "sd_enable_arr": [],
+  "sd_disable_arr": [],
+  "sd_mask_arr": [
     "hibernate.target"
   ],
-  "extra_packages": [
-    "sof_firmware",
-    "brightnessctl"
-  ],
+  "extra_packages_arr": [],
   "flags": [
-    "populate"
+    "recovery",
+    "network",
+    "openbox",
+    "populate",
+    "populate-root"
   ],
-  "scripts": [
-    "/home/alex/SynologyDrive/projects/Starchy/examples/openbox.sh"
+  "scripts_arr": [
+    "examples/openbox.sh"
   ],
-  "firmware": [
+  "firmware_arr": [
     "linux-firmware"
   ],
-  "copy_to_root": [
-    "/home/alex/SynologyDrive/projects/Starchy/examples/openbox"
+  "copy_to_root_arr": [
+    "examples/openbox"
   ],
   "mkinitcpio": true,
   "mkinitcpio_modules": [
@@ -48,9 +47,9 @@
     "squashfs",
     "patch"
   ],
-  "mkinitcpio_passwd": "",
+  "mkinitcpio_passwda": "",
   "mkinitcpio_cmdline_blacklist": [],
-  "mkinitcpio_dir": "/home/alex/SynologyDrive/projects/Starchy/initcpio",
+  "mkinitcpio_dir": "initcpio",
   "no_patch": false,
   "only_mkinitcpio": false
 }

@@ -88,7 +88,7 @@ main() {
 	# if patch resides on filesystem, load it
 	# if patch file is not present, cancel loading
 	if [[ "$dev" != "sfs*" ]] && [[ $dev != $path ]]; then
-		if ! mount_patch_source; then return 1; fi
+		mount_patch_source || return 1
 	fi
 
 	# mount patch, then check for presence of init.sh
@@ -107,7 +107,7 @@ main() {
 # the patch; useful if the patch later bind mounts a subdirectory of the root
 # filesystem, e.g. to allow for persistant storage or if patch is really large.
 run_latehook() {
-	if ! mount | grep "on /patch type" &> /dev/null; then return 1; fi
+	mount | grep "on /patch type" &> /dev/null || return 1
 	echo "Running patch script..."
 	export nr=/new_root
 	export pd="$patch_location"
