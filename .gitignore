@@ -1,4 +1,4 @@
-/test.sh
-/test.json
+/test*
 /settings.json
 /personal
+/mkinitcpio.conf
