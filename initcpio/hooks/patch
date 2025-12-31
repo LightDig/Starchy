@@ -115,26 +115,41 @@ run_latehook() {
 	export patch_dev="$dev"
 	export opts="$patch_script_opts"
 	no_unmount=$(ash <<PEOF
+split() {
+	IFS="\$2" set -- "\$3"
+	prefix=\$1
+	i=0
+	for part in \$@; do eval "\$prefix_\$i=\"\$part\""; i=\$((\$i+1)); done
+}
+
 register_systemd() {
-	[[ -z \$1 ]] && return 1
-	[[ \$2 ]] && wants=\$2
-	[[ -z \$2 ]] && wants=multi-user.target
-	[[ \$3 ]] && service_name=\$3
-	[[ -z \$3 ]] && service_name=PatchForSfs
-	[[ \$4 ]] && description=\$4
-	[[ -z \$4 ]] && description="Patch for SFS"
-	cat <<EOF > /new_root/etc/systemd/system/\$3.service
+	[[ \$1 ]] || return 1
+
+	service_name="\$(if [[ \$3 ]]; then echo "\$3"; else echo StarchyPatch; fi)"
+	description="\$(if [[ \$4 ]]; then echo "\$4"; else echo "Patch for Starchy system"; fi)"
+
+	split "wab" "|" "\$2"
+	wants="\$wab_0"
+	after="\$wab_1"
+	before="\$wab_2"
+
+	[[ \$wants ]] || wants=multi-user.target
+	[[ -d "/new_root/$wants.wants" ]] || mkdir "/new_root/$wants.wants"
+
+	cat <<EOF > "/new_root/etc/systemd/system/\$service_name.service"
 [Unit]
 Description=\$description
+\$([[ \$after ]] || echo "# ")After="\$after"
+\$([[ \$before ]] || echo "# ")Before="\$after"
 
 [Service]
-ExecStart=/bin/bash -c "source \$1 &> /sfs/systemd-patch.log"
+ExecStart=/bin/bash -c 'source "\$1" &> /sfs/systemd-patch.log'
 
 [Install]
 WantedBy=\$wants
 EOF
 	[[ ! -d "/etc/systemd/system/\$wants.wants" ]] && mkdir "/etc/systemd/system/\$wants.wants"
-	ln -sf /etc/systemd/system/\$service_name.service /etc/systemd/system/\$wants.wants/
+	ln -sf "/etc/systemd/system/\$service_name.service" "/etc/systemd/system/\$wants.wants/"
 }
 	source /patch/init.sh
 	echo $no_unmount

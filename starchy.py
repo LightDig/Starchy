@@ -441,7 +441,7 @@ illegal_flags = {"wdir","odir","mdir","yay","user","no_root_passwd","timezone","
 	"user_shell","root_shell","compression","sd_enable_arr","sd_disable_arr","sd_mask_arr","root"
 	"extra_packages_arr","scripts_arr","firmware_arr","copy_to_root_arr","sd_enable",
 	"sd_disable","sd_mask","extra_packages","scripts","firmware","copy_to_root","warning","quit",
-	"mkinitcpio_conf"
+	"mkinitcpio_conf","wrapper"
 }
 
 # ensure no illegal flags or package groups are present
@@ -540,6 +540,7 @@ if settings["export_bash"]:
 	bash_export.update(unexpanded) # replace full paths with unexpanded paths
 	reassignkeys(bash_export,("build_dir","output_dir","mkinitcpio_dir"),("wdir","odir","mdir"))
 	delkeys(bash_export,"flags","install") # remove flags and pkgroups so they can be added seperately
+	delkeys(bash_export,"mkinitcpio","skip_system") # these should be determined by specifying system and initramfs as arguments
 	with open(settings["export_bash"],'w') as file: # start writing file
 		file.write("#!/usr/bin/env bash\n") # write shebang
 		file.write("# this is a generated wrapper script for starchy.sh\n") # header comment
@@ -552,15 +553,38 @@ if settings["export_bash"]:
 					file.write("".join((x,"=true\n")))
 		file.write("""
 # Run script
-if [[ ! $skip_system = true ]]; then
+for x in "$@"; do
+	case $(awk '{print tolower($0)}' <<< "$x") in
+		sys|system)
+			skip_system=false
+		;;
+		initramfs|inicpio|mkinitcpio)
+			mkinitcpio=true
+		;;
+		*)
+			echo "Unknown option '$x'"
+			exit 1
+		;;
+	esac
+done
+
+if [[ ! $skip_system ]] && [[ ! $mkinitcpio ]]; then
+	echo "Please pass a list of scripts you would like to run"
+	echo "available options: $0 [system|initramfs]+"
+fi
+
+[[ -z $skip_system ]] && skip_system=true
+[[ -z $mkinitcpio ]] && mkinitcpio=false
+
+wrapper=true # it's preferable this doesn't get removed
+
+if [[ $skip_system = false ]]; then
 	if [[ -f starchy.sh ]]; then
 		source starchy.sh
 	else
 		echo starchy.sh not found!
 	fi
-fi
-
-if [[ $mkinitcpio = true ]]; then
+elif [[ $mkinitcpio = true ]]; then
 	if [[ -f mkinitcpio.sh ]]; then
 		source mkinitcpio.sh
 	else
@@ -612,6 +636,9 @@ env.update(unexpanded)
 # reassign keys to their script names
 reassignkeys(env,("build_dir","output_dir","mkinitcpio_dir"),("wdir","odir","mdir"))
 
+# tell the script that they are being run from a wrapper
+env.update({"wrapper":"true"})
+
 # turn values into environment variable strings
 for i,x in opts.items():
 	if i not in env:
@@ -620,4 +647,7 @@ for i,x in opts.items():
 		env[i] = envify(env[i])
 
 # run script
-subprocess.run(("bash",Path("starchy.sh").absolute()),env=env)
+if settings["skip_system"]:
+	subprocess.run(("bash",Path("mkinitcpio.sh").absolute()),env=env)
+else:
+	subprocess.run(("bash",Path("starchy.sh").absolute()),env=env)

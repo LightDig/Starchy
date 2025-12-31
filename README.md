@@ -1,4 +1,6 @@
 THIS IS A WORK IN PROGRES AND IS NOT READY TO BE USED YET
+system generation seems to work now
+mkinitcpio is a work in progress
 
 # Starchy
 A small project written in shell and python that aims to create a usable Arch Linux system as a SquashFS and provide the necessary means to make this system bootable, either directly from a computer's hard drive or from a removable medium. The project's aim is more towards creativity rather than absolute necessity.
@@ -26,7 +28,7 @@ This is a program that MUST be run as root. Since it's mostly written in shell, 
   - A boot password
   - Booting the SFS from a file or from a partition
   - Booting the SFS from a file on an encrypted partition
-- Store/load json or bash presets to recreate your system
+- Store/load json presets or export bash wrapper scripts to recreate your system
   - Json presets require the python wrapper but can easily be configured and have options overriden from the command line.
   - Bash presets can run without python but the file needs to be manually edited to make changes.
 
@@ -49,11 +51,4 @@ Note that you probably already have `mkinitcpio` and `python` as `mkinitcpio` is
 
 ## Todo
 - [ ] Write more wiki pages
-- [ ] Create a complete example preset with openbox
-- [ ] Properly set up `cmdline-blacklist` hook
-- [ ] Properly set up and test `passwd` hook
-- [ ] Test disk encryption
-- [ ] Test making system without `build` and `vdso` kernel module folders
-- [ ] Properly comment code
-- [ ] Test persistant storage setup
-- [x] Test `unplug_poweroff` feature
+- [ ] Finish working on mkinitcpio portion of script

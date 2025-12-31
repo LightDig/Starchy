@@ -22,8 +22,8 @@
 # be a security risk
 
 run_hook() {
-	list=($(sed -E 's/=(".*"|[^ ]*( |$))/ /g' < /proc/cmdline))
-	for i in "${list[@]}"; do
+	list=$(sed -E 's/=(".*"|[^ ]*( |$))/ /g' < /proc/cmdline)
+	for i in $list; do
 		for x in BLACKLIST; do
 			if [[ "$(echo "$i" | sed 's/=.*//')" = "$x" ]]
 				echo "Illegal option detected: $x"

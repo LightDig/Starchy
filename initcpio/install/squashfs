@@ -27,6 +27,8 @@ build() {
 	add_binary zramctl
 	add_binary cryptsetup
 	add_binary dmsetup
+	add_binary mkswap
+	add_binary swapon
 	add_module squashfs
 	add_module overlay
 	add_module loop

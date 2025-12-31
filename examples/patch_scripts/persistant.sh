@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/ash
 
 # Copyright (C) 2025 LightDig
 
@@ -30,13 +30,14 @@ mkdir /new_root/persistant
 [[ ! -d $patch/persistant/home ]] && mkdir -p "$patch/persistant/home"
 [[ ! -d $patch/persistant/NetworkManager ]] && mkdir -p "$patch/persistant/NetworkManager"
 mount --bind $patch/persistant /new_root/persistant
-for i in $(basename /new_root/home/*); do
-	if [[ ! -d "$patch/persistant/home/$i" ]]; then
-		ugid=$(ls -dn /new_root/home/$i | awk '{print($3,$4)}' | tr ' ' ':')
-		mkdir -m 750 $patch/persistant/home/$i
-		chown $ugid "$patch/persistant/home/$i"
+for i in /new_root/home/*; do
+	name=$(basename "$i")
+	if [[ ! -d "$patch/persistant/home/$name" ]]; then
+		ugid=$(ls -dn /new_root/home/$name | awk '{print($3,$4)}' | tr ' ' ':')
+		mkdir -m 750 $patch/persistant/home/$name
+		chown $ugid "$patch/persistant/home/$name"
 	fi
-	ln -s /persistant/home/$i /new_root/home/$i/Persistant
+	ln -s /persistant/home/$name /new_root/home/$name/Persistant
 done
 
 rm -rf /new_root/etc/NetworkManager/

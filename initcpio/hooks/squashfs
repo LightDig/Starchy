@@ -17,25 +17,61 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # SOFTWARE.
 
-# Simple script that gives two options for mounting a squashfs:
-# 1: Mount a squashfs that resides directly on a block device
-# 2: Mount a squashfs file on a specified filesystem
+enter_to_shutdown() {
+	printf "Press Enter to shut down"
+	read; poweroff -f
+}
+
+# function for turning a provided value into a integer of kibibytes
+establish_size() {
+	case $1 in
+		*K) # return kibibytes
+			echo ${1%%K*}
+		;;
+		*M) # return mebibytes as kibibytes
+			echo $((${1%%M*} * 1024))
+		;;
+		*G) # return gibibytes as kibibytes
+			echo $((${1%%G*} * 1048576))
+		;;
+		*)
+			# if no suffix is provided, check if default suffix is provided
+			# otherwise return a percentage of RAM
+			if [[ $2 ]]; then
+				establish_size "$1$2"
+			else
+				echo $((($(awk '/MemTotal/ {print($2)}' < /proc/meminfo) * $1) / 100))
+			fi
+		;;
+	esac
+}
 
 make_overlay() {
-	if [[ $squashfs_zram ]]; then
+	# load zram module if needed
+	if [[ $ov_algo != tmpfs ]] || [[ $zram_swap ]]; then
 		modprobe zram
-		mem_size=$((($(awk '/MemTotal/ {print($2)}' < /proc/meminfo) * $squashfs_overlay_size) / 100))
-		overlay=$(zramctl -fs ${mem_size}K -a $squashfs_zram)
+	fi
+
+	# mount the system
+	if [[ $ov_algo = tmpfs ]]; then
+		mount -t tmpfs tmpfs -o size=$(establish_size $ov_size)K /tmpfs_overlay
+		mkdir /tmpfs_overlay/upper
+		mkdir /tmpfs_overlay/work
+		mount -t overlay overlay -o lowerdir=/squashfs,upperdir=/tmpfs_overlay/upper,workdir=/tmpfs_overlay/work /new_root
+	else
+		overlay=$(zramctl -fs $(establish_size $ov_size)K -a $ov_algo)
 		mkfs.ext2 "$overlay" 1> /dev/null
 		mount "$overlay" /tmpfs_overlay
 		mkdir /tmpfs_overlay/upper
 		mkdir /tmpfs_overlay/work
 		mount -t overlay overlay -o lowerdir=/squashfs,upperdir=/tmpfs_overlay/upper,workdir=/tmpfs_overlay/work /new_root
-	else
-		mount -t tmpfs tmpfs -o size=$squashfs_overlay_size% /tmpfs_overlay
-		mkdir /tmpfs_overlay/upper
-		mkdir /tmpfs_overlay/work
-		mount -t overlay overlay -o lowerdir=/squashfs,upperdir=/tmpfs_overlay/upper,workdir=/tmpfs_overlay/work /new_root
+	fi
+
+	# create the zram swap if applicable
+	if [[ $zram_swap ]]; then
+		overlay=$(zramctl -fs $(establish_size $zr_size)K -a $zr_algo)
+		mkswap $overlay
+		swapon $overlay
 	fi
 }
 
@@ -70,16 +106,74 @@ main() {
 	# aliases
 	[[ $sfs_opts ]] && squashfs_opts=$sfs_opts
 	[[ $sfs_source_opts ]] && squashfs_source_opts=$sfs_source_opts
-	[[ $sfs_overlay_size ]] && squashfs_overlay_size=$sfs_overlay_size
+	[[ $sfs_overlay ]] && squashfs_overlay=$sfs_overlay
 	[[ $sfs_timeout ]] && squashfs_timeout=$sfs_timeout
 	[[ $sfs_copy ]] && squashfs_copy=$sfs_copy
-	[[ $sfs_zram ]] && squashfs_zram=$sfs_zram
+	[[ $sfs_copy_force ]] && squashfs_copy_force=$sfs_copy_force
 
-	# full-name
+	# establish some defaults
 	[[ -z $squashfs_opts ]] && squashfs_opts=ro
 	[[ -z $squashfs_source_opts ]] && squashfs_source_opts=ro
-	[[ -z $squashfs_overlay_size ]] && squashfs_overlay_size=80
 	[[ -z $squashfs_timeout ]] && squashfs_timeout=10
+
+	## validate options and establish more defaults
+	# check that squashfs timeout is a numeric value
+	if [[ ! $squashfs_timeout =~ "[0-9]+" ]]; then
+		echo "Invalid option: squashfs_timeout=$squashfs_timeout"
+		quit=true
+	fi
+
+	if [[ $squashfs_overlay ]]; then
+		# check that value is valid (<size>;<algorithm>|<size>|<algorithm>)
+		if [[ ! $squashfs_overlay =~ "^([0-9]+[KMG]?)$|^([0-9]+[KMG]?;)?(lzo|lz4|lz4hc|deflate|842|zstd|tmpfs)$" ]]; then
+			echo "Invalid option: squashfs_overlay=$squashfs_overlay"
+			quit=true
+		else
+			# if $squashfs_overlay contains two values
+			if [[ "$squashfs_overlay" = "*;*" ]]; then
+				ov_algo=${squashfs_overlay##*;} # read algorithm
+				ov_size=${squashfs_overlay%%;*} # read size
+			else # if squashfs is only one value
+				# if value is a number, assume size
+				if [[ $squashfs_overlay =~ "^[0-9]+$" ]]; then
+					ov_algo=tmpfs
+					ov_size=$squashfs_overlay
+				else # if value is not a number, assume compression
+					ov_algo=$squashfs_overlay
+					ov_size=$(if [[ $ov_algo = tmpfs ]]; then echo 80; else echo 150; fi)
+				fi
+			fi
+		fi
+	else # if squashfs_overlay is not set
+		ov_algo=tmpfs
+		ov_size=80
+	fi
+
+	if [[ $zram_swap ]]; then
+		# check that value is valid (<size>;<algorithm>|<algorithm>)
+		if [[ ! $zram_swap =~ "^([0-9]+[KMG]?;)?(lzo|lz4|lz4hc|deflate|842|zstd)$" ]]; then
+			echo "Invalid option: zram_swap=$zram_swap"
+			quit=true
+		else
+			if [[ $zram_swap ]]; then
+				# if $zram_swap contains two values
+				if [[ "$zram_swap" = "*;*" ]]; then
+					zr_algo=${squashfs_overlay##*;} # read algorithm
+					zr_size=${squashfs_overlay%%;*} # read size
+				else # if only one value is provided
+					zr_algo=$zram_swap # read algorithm
+					# set size based on whether squashfs_overlay is in zram
+					if [[ $ov_algo = tmpfs ]]; then
+						zr_size=100
+					else
+						zr_size=40
+					fi
+				fi
+			fi
+		fi
+	fi
+
+	[[ "$quit" = true ]] && enter_to_shutdown
 
 	# device options
 
@@ -122,17 +216,26 @@ main() {
 	fi
 
 	if [[ $squashfs_copy ]]; then
+	# if remaining RAM threshold not set (to a valid option), set to default value of 2GiB
+	echo "$squashfs_copy" -qE "[0-9]+[KMG]?" || squashfs_copy=2G
+		# store size of the SquashFS filesystem
 		size=$(unsquashfs -s $path | awk '/Filesystem size/ {print $3}')
-		if [[ $(($(awk '/MemTotal/ {print($2)}' < /proc/meminfo) - $size / 1024)) -gt 2097151 ]]; then
+		# check if the remaining memory after copying meets the minimum requirement
+		if [[ $(($(awk '/MemTotal/ {print($2)}' < /proc/meminfo) - $size / 1024)) -gt $(($(establish_size "$squashfs_copy" G) - 1)) ]]; then
 			echo "Copying SquashFS to RAM; this may take a while..."
-			blocks=$(($size / 65536 + 1))
-			if [[ $dev = $path ]]; then
-				dd "if=$path" bs=65536 count=$blocks | pv --size $(($blocks * 65536)) | dd of=/root_fs.sfs
-			else
+			if [[ $dev = $path ]]; then # if copy from block device
+				blocks=$(($size / 65536 + 1)) # calculate the amount of blocks to copy over
+				dd "if=$path" bs=65536 count=$blocks | pv --size $size | dd of=/root_fs.sfs
+			else # if copy from filesystem path
 				dd "if=$path" | pv --size $size | dd of=/root_fs.sfs
 			fi
-			path=/root_fs.sfs
-		else
+			path=/root_fs.sfs # store path of the copied squashfs
+		else # if remaining memory is not enough
+			# if squashfs_copy_force is true, shut down the system
+			if [[ $squashfs_copy_force ]]; then
+				echo; echo "This device does not have enough Memory to run this system"
+				enter_to_shutdown
+			fi
 			unset squashfs_copy
 			echo "Limited RAM, skipping copy_to_ram..."
 		fi

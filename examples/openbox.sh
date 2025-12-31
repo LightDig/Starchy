@@ -16,16 +16,12 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # SOFTWARE.
 
-pre_pacstrap() {
+pre_run() {
 	# openbox packages
-	p_openbox=(openbox xorg-xinit polybar dunst hsetroot gnome-disk-utility lxterminal lxrandr qalculate-gtk gucharmap pcmanfm baobab pulseaudio pavucontrol sof-firmware blueman rofi xcape xorg-server file-roller slop xorg-xprop wmctrl alsa-utils gedit lxqt-policykit slock libinput)
+	register_package_group openbox openbox xorg-xinit polybar dunst hsetroot gnome-disk-utility lxterminal lxrandr qalculate-gtk gucharmap pcmanfm baobab pulseaudio pavucontrol sof-firmware blueman rofi xcape xorg-server file-roller slop xorg-xprop wmctrl alsa-utils gedit lxqt-policykit slock libinput
 
 	# packages for zsh shell
-	p_zsh=(zsh zsh-syntax-highlighting zsh-autosuggestions fzf)
-
-	# register packages if needed
-	[[ $openbox = true ]] && extra_packages+=("${p_openbox[@]}")
-	[[ $user_shell = zsh ]] && extra_packages+=("${p_zsh[@]}")
+	register_package_group zsh zsh zsh-syntax-highlighting zsh-autosuggestions fzf
 }
 
 pre_chroot() {
@@ -86,8 +82,4 @@ EOF
 	# Install oh-my-zsh, pass --unattended to install script and modify script to replace $HOME with $(pwd), then install syntax highlighting and autosuggestions
 	KEEP_ZSHRC=yes bash -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | sed "s/^HOME=.*/HOME=\"$(echo "$root/home/$user" | sed 's/\//\\\//g')\"/")" "" --unattended
 	bash -c "cd \"$root/home/$user/.oh-my-zsh/plugins\" && git clone https://github.com/zsh-users/zsh-syntax-highlighting.git && git clone https://github.com/zsh-users/zsh-autosuggestions"
-
-	# clear dotfiles in homes
-	rm -rf "$root"/root/.*
-	rm "$root"/home/*/.{bash*,zcomp*}
 }

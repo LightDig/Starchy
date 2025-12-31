@@ -3,11 +3,11 @@
   "user": "john",
   "no_root_passwd": false,
   "timezone": "Europe/Berlin",
-  "hostname": "dell-alex",
+  "hostname": "recovery",
   "keymap": "de-latin1",
   "user_shell": "/usr/bin/zsh",
   "root_shell": "/usr/bin/bash",
-  "compression": "-comp xz",
+  "compression": "zstd",
   "sd_enable_arr": [],
   "sd_disable_arr": [],
   "sd_mask_arr": [
@@ -15,11 +15,14 @@
   ],
   "extra_packages_arr": [],
   "flags": [
+    "populate",
+    "populate-root"
+  ],
+  "install": [
     "recovery",
     "network",
     "openbox",
-    "populate",
-    "populate-root"
+    "zsh"
   ],
   "scripts_arr": [
     "examples/openbox.sh"
