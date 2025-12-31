@@ -18,10 +18,10 @@
 
 from argparse import ArgumentParser
 import json
+from operator import itemgetter
 from pathlib import Path
 import subprocess
 import sys
-import tomllib
 
 class Placeholder:
 	pass
@@ -100,7 +100,7 @@ parser.add_argument('--root-shell',
 )
 parser.add_argument('-c','--comp','--compression',
 	type=str,
-	help="What compression options to pass to mksquashfs (Default = -comp zstd)",
+	help="What compression options to pass to mksquashfs (Default = zstd)",
 	dest="compression"
 )
 parser.add_argument('-e','--systemd-enable',
@@ -136,6 +136,11 @@ parser.add_argument('-f','--flags',
 	type=str,
 	help="A set of flags for things to include in the system. The only flag that is supported by default is 'populate' which fills the home directory with standard folders like Downloads and Documents."
 )
+parser.add_argument('-i','--install','--package-groups',
+	nargs='*',
+	type=str,
+	help="Set of package groups to install. By default these options are available: base, texteditors, recovery, netowrk, media, yay. By default base and texteditors are enabled."
+)
 parser.add_argument('-S','--scripts',
 	nargs='*',
 	type=str,
@@ -164,7 +169,7 @@ parser.add_argument('-M','-I','--mkinitcpio','--initramfs',
 parser.add_argument('--MM','--mkinitcpio-modules',
 	nargs="*",
 	type=str,
-	help="Which mkinitcpio modules to add (Default = vfat)",
+	help="Which mkinitcpio modules to add",
 	metavar="MODULES",
 	dest="mkinitcpio_modules"
 )
@@ -176,9 +181,8 @@ parser.add_argument('--MB','--mkinitcpio-binaries',
 	dest="mkinitcpio_binaries"
 )
 parser.add_argument('--MF','--mkinitcpio-files',
-	nargs="*",
 	type=str,
-	help="Which mkinitcpio files to add",
+	help="Which mkinitcpio files to add. Specify a string with format FILE1;FILE2 or FILE1:LOCATION1;FILE2 and so on.",
 	metavar="FILES",
 	dest="mkinitcpio_files"
 )
@@ -203,6 +207,13 @@ parser.add_argument('--ML','--mkinitcpio-cmdline-blacklist',
 	metavar="CMDLINE_BLACKLIST",
 	dest="mkinitcpio_cmdline_blacklist"
 )
+parser.add_argument('--MC','--mkinitcpio_compression',
+	type=str,
+	help="Compression to use for initramfs generation. (Default = zstd)",
+	metavar="COMPRESSION",
+	dest="mkinitcpio_compression",
+	choices=("zstd","gzip","bzip2","lzma","xz","lzop","lz4")
+)
 parser.add_argument('--MD','--mkinitcpio-dir',
 	type=str,
 	help="Directory in which the additional initcpio hooks are stored",
@@ -214,15 +225,15 @@ parser.add_argument('--no-patch',
 	const=Switch,
 	help="Whether to remove the patch system (removes the mkinitcpio hook)"
 )
-parser.add_argument('--only-mkinitcpio','--only-initramfs',
+parser.add_argument('-X','--skip-system','--only-initramfs',
 	action='store_const',
 	const=Switch,
 	help="Skip building the system and go straight to initramfs generation"
 )
-parser.add_argument('-b','--path',
-	type=str,
-	help="Path of the build script (Default = ./starchy.sh)"
-)
+#parser.add_argument('-b','--path',
+#	type=str,
+#	help="Path of the build script (Default = ./starchy.sh)"
+#)
 parser.add_argument('-p','--preset',
 	default=None,
 	type=str,
@@ -232,7 +243,7 @@ parser.add_argument('--export',
 	type=str,
 	help="Export options as a preset file"
 )
-parser.add_argument('--export-bash',
+parser.add_argument('--export-bash','--bash-export',
 	type=str,
 	help="Export options as a bash script"
 )
@@ -245,16 +256,13 @@ parser.add_argument('--export-settings',
 args = parser.parse_args()
 
 # ### MAIN FUNCTIONS ###
-# create function for checking illegal characters
+# function for checking illegal characters
 def validate_opt(i,n):
-	#print(n)
-	if type(n) is list:
+	if type(n) is list: # parse all options in list
 		for x in n:
 			validate_opt(i,x)
-	elif type(n) is list:
-		sys.exit("".join(('Key "',i,'" contains illegal data type!')))
 	elif type(n) is not str:
-		pass
+		sys.exit("".join(('Key "',i,'" contains illegal data type!')))
 	elif not (set(i).isdisjoint('$()[]|;<>') and set((n)).isdisjoint('$()[]|;<>')):
 		sys.exit("".join(("Following pair contains illegal characters: ",i,'="',n,'"')))
 	return n
@@ -263,6 +271,7 @@ def validate_opt(i,n):
 def reject_constant(x):
 	sys.exit("".join(("JSON decode error: constant ",x," is not allowed!")))
 
+# function to read json file
 def json_file(f):
 	with open(f) as file:
 		try:
@@ -271,6 +280,7 @@ def json_file(f):
 			print("JSON decode error:",err)
 			sys.exit(1)
 
+# continue prompt
 def prompt_continue(q="Continue"):
 	try:
 		continue_=input("".join((q,' [y/N]> ')))
@@ -282,14 +292,45 @@ def prompt_continue(q="Continue"):
 	if continue_.lower() not in ('y','yes','yae'):
 		sys.exit("exit")
 
+# function to ask before overwriting file
 def prompt_overwrite(f):
 	if f.is_file():
 		print("".join(('File "',str(f),'" already exists')))
 		prompt_continue("Overwrite?")
 
-# ### Defaults ###
-# to be able to properly handle loading presets with argument overrides
-# defaults must be kept seperate
+# function to return a subset of a dictionary
+def getitems(dictionary,*keys):
+	return dict(zip(keys,itemgetter(*keys)(dictionary)))
+
+# function to delete a list of keys from a dictionary
+def delkeys(dictionary,*keys):
+	for x in keys:
+		dictionary.pop(x)
+
+# function for reassigning a dictionary key to a new name
+def reassignkey(dictionary,key,target):
+	dictionary.update({target: dictionary[key]})
+	dictionary.pop(key)
+
+# looped version for multiple keys
+def reassignkeys(dictionary,key,target):
+	for i,x in zip(key,target):
+		reassignkey(dictionary,i,x)
+
+def cpvalues(dict1,dict2,*keys):
+	for x in keys:
+		dict2.update({x: dict1[x]})
+
+# function to expand paths in a string or list
+def expandpaths(p):
+	if p == "":
+		return None
+	if type(p) is str:
+		return Path(p).expanduser().absolute()
+	elif type(p) is list:
+		return [Path(x).expanduser().absolute() for x in p]
+	else:
+		raise TypeError("Can only expand string or list")
 
 default_opts = {
 	"yay": "",
@@ -300,113 +341,76 @@ default_opts = {
 	"keymap": host_keymap,
 	"user_shell": "/usr/bin/bash",
 	"root_shell": None,
-	"compression": "-comp zstd",
+	"compression": "zstd",
 	"sd_enable_arr": [],
 	"sd_disable_arr": [],
 	"sd_mask_arr": ["hibernate.target"],
 	"extra_packages_arr": [],
 	"flags": [],
+	"install": ["base", "texteditors"],
 	"scripts_arr": [],
-	"firmware_arr": ["linux-firmware"],
+	"firmware": ["linux-firmware"],
 	"copy_to_root_arr": [],
 	"mkinitcpio": False,
-	"mkinitcpio_modules": ["vfat"],
+	"mkinitcpio_modules": [],
 	"mkinitcpio_binaries": [],
-	"mkinitcpio_files": [],
+	"mkinitcpio_files": "",
 	"mkinitcpio_hooks": ["base","microcode","keyboard","keymap","autodetect","udev","block","squashfs","patch"],
 	"mkinitcpio_passwd": "",
 	"mkinitcpio_cmdline_blacklist": [],
+	"mkinitcpio_compression": "zstd",
+	"skip_system": False,
 	"mkinitcpio_dir": "./initcpio",
 	"no_patch": False,
-	"only_mkinitcpio": False
-}
 
-default_settings = {
 	"build_dir": "/tmp/recovery",
 	"output_dir": "",
-	"path": "./starchy.sh",
+#	"path": "./starchy.sh",
 	"preset": "",
 	"export": "",
 	"export_bash": ""
 }
 
-# create list with sources for options and sources for settings respectively
-# options are for standard configurations
-# and settings are for meta things, such as output_dir
-sources=[[], []]
+opts=args.__dict__ # make args accessible as dict
 
-# expand paths
-settings_path = Path('./settings').absolute() # establich settings path
+sources=[] # list for storing options sources
 
-## Load preset
+## preset
 if args.preset:
+	# check that preset exists
+	preset_file=Path(args.preset).expanduser().absolute()
+	if not preset_file.is_file():
+		sys.exit("".join(("Preset file '",str(preset_file),"' not found")))
+
+	# load preset
 	args.preset = Path(args.preset).expanduser().absolute()
 	if not args.preset.is_file():
-		sys.exit("".join(('Preset file "',str(args.preset),'" does not exist!')))
+		sys.exit("".join(('Preset file "',str(args.preset),'" does not exist')))
 	preset=json_file(args.preset) # read preset file
-	sources[0].append(preset) # add preset as source
-sources[0].append(default_opts) # add default options as source
+	sources.append(preset) # add preset as source
+sources.append(default_opts) # add default options as source
 
-## Load settings
-if settings_path.is_file(): # check that settings file exists
-	settings_file=json_file(settings_path) # read settings file
-	sources[1].append(settings_file) # add file as source
-sources[1].append(default_settings) # add default options as source
+# process options
+for source in sources:
+	for key,item in source.items():
+		if key in opts:
+			if opts[key] is Placeholder:
+				opts[key]=item
+			elif opts[key] is Switch:
+				opts[key]=bool(item)^bool(opts[key])
 
-# set opts to dictionary of args
-opts=args.__dict__.copy()
-settings={} # dict for settings such as build and output directories
-for x in 'build_dir','output_dir','path','preset','export','export_bash','export_settings':
-	settings.update({x:opts[x]})
-	opts.pop(x)
+# create dictionary with unexpanded paths for export-bash feature
+paths = ["build_dir","output_dir","export","export_bash","copy_to_root_arr","scripts_arr","mkinitcpio_dir"]
+unexpanded=getitems(opts,*paths)
 
-# categories are the dictionaries that contain the actual options for later
-categories = [opts, settings]
+# expand paths
+for x in paths:
+	opts.update({x: expandpaths(opts[x])})
 
-# establish all options in this monstrous construct
-for source,category in zip(sources,categories): # loop through sources bundled with categories
-	for options in source: # loop through each dictionary in given source
-		for index,item in category.items(): # loop through the key/value pairs of each dictionary
-			if index in options: # check if option is supported by the category (opts/settings)
-				if item is Placeholder: # check if item is placeholder value
-					category[index]=options[index] # replace placeholder value with real value
-				elif item is Switch: # check if item is a Switch object
-					category[index]=bool(item)^bool(options[index]) # toggle boolean option
-					# I forgot why this works, but it works; it turns a flag into a toggle
-					# so that if it is given in a preset it can be toggled back off
-
-# check for invalid options
-for category in categories:
-	for i,x in category.items():
-		validate_opt(i,x)
-
-# NOTE I have a feeling there is a slightly more efficient way to do all the above
-# TODO find it
-
-# ### EXPAND SETTINGS PATHS + EXPORT SETTINGS ###
-# keep an unexpanded path strings for exports
-unexpanded = settings.copy()
-unexpanded.update({'mkinitcpio_dir': opts['mkinitcpio_dir'], 'scripts_arr': opts['scripts_arr'], 'copy_to_root_arr': opts['copy_to_root_arr']})
-
-# expand paths in settings
-for x in settings:
-	if settings[x] and type(settings[x]) is str:
-		settings[x] = Path(settings[x]).expanduser().absolute()
-
-# expand output directory
-# if none provided, output dir is ${build_dir}/output
-if settings["output_dir"]:
-	settings["output_dir"] = Path(settings["output_dir"]).expanduser().absolute()
-else:
-	settings["output_dir"] = Path("".join((str(settings["build_dir"]),"/output")))
-
-if args.export_settings:
-	export_path = Path('./settings.json').absolute()
-	settings_export = {"build_dir": str(settings["build_dir"]), "output_dir": str(settings["output_dir"]), "path": str(settings["path"])}
-	prompt_overwrite(export_path)
-	with open(export_path,'w') as file:
-		json.dump(settings_export,file,indent=2,allow_nan=False)
-	sys.exit()
+# create settings dictionary and remove those values from opts
+settings_keys = ("build_dir","output_dir","preset","export","export_bash","export_settings","mkinitcpio_dir")
+settings = getitems(opts,*settings_keys)
+delkeys(opts,*settings_keys)
 
 # ### WARNING ###
 print("WARNING: This is a python wrapper that runs shell scripts on basis of USER INPUT as ROOT.")
@@ -420,79 +424,59 @@ print("Go to <https://github.com/LightDig/Starchy/wiki/Running-starchy.py>")
 print()
 prompt_continue()
 
-# ### ARG PROCESSING ###
+path_checker = {1: "is_file", 2: "is_dir", 3: "exists"}
 
-## Paths
-# expand path of mkinitcpio directory stored in opts
-if opts['mkinitcpio_dir']:
-	opts['mkinitcpio_dir'] = Path(opts['mkinitcpio_dir']).expanduser().absolute()
+# check that paths exist
+for path_list,mode in zip(getitems(opts,"scripts_arr","copy_to_root_arr").values(),(1,2)):
+	for x in path_list:
+		if not x.__getattribute__(path_checker[mode])():
+			sys.exit("".join(("Path '",str(x),"' does not exist")))
 
-# expand path lists in opts
-for x in 'scripts_arr','copy_to_root_arr':
-	if opts[x]:
-		opts[x] = [Path(y).expanduser().absolute() for y in opts[x]]
+# replace dashes with underscores in flags and install
+for x in "flags","install":
+	opts[x] = [x.replace('-','_') for x in opts[x]]
 
-# Scripts
-# check that provided scripts exists
-for x in opts["scripts_arr"]:
-	if not x.is_file():
-		sys.exit("".join(('Script file \33[33m"',str(x),'"\33[0m does not exist!')))
-
-# Copy to root
-# check that tarballs/folders exist
-for x in opts["copy_to_root_arr"]:
-	if not x.exists():
-		sys.exit("".join(('File/folder \33[33m"',str(x),'"\33[0m does not exist!')))
-
-if settings["export"]:
-	settings["export"] = Path(settings["export"]).expanduser().absolute()
-
-## Mkinitcpio
-# remove patch if specified
-if opts["no_patch"]:
-	opts["mkinitcpio_hooks"].remove("patch")
-
-# add passwd hook if specified
-if opts["mkinitcpio_passwd"] != "":
-	if "keyboard" not in opts["mkinitcpio_hooks"]:
-		sys.exit("The keyboard hook must be in mkinitcpio hooks to use passwd!\nIt is also recommended to put keymap after keyboard if you use a non-US layout.")
-	hook_before_passwd = ("keymap" if "keymap" in opts["mkinitcpio_hooks"] else "keyboard")
-	opts["mkinitcpio_hooks"].insert(args.mkinitcpio_hooks.index(hook_before_passwd)+1,"passwd")
-
-## Flags
-# Replace dashes in flags with underscores
-opts["flags"] = [x.replace('-','_') for x in opts["flags"]]
-
-# list of flags that may not be set using the -f option
+# list of flags that may not be set using the -f or -i options
 illegal_flags = {"wdir","odir","mdir","yay","user","no_root_passwd","timezone","hostname","keymap",
 	"user_shell","root_shell","compression","sd_enable_arr","sd_disable_arr","sd_mask_arr","root"
 	"extra_packages_arr","scripts_arr","firmware_arr","copy_to_root_arr","sd_enable",
 	"sd_disable","sd_mask","extra_packages","scripts","firmware","copy_to_root","warning","quit",
-	"mkinitcpio_conf","p_network","p_media","p_yay"
+	"mkinitcpio_conf"
 }
 
+# ensure no illegal flags or package groups are present
+# ensure no illegal flags are present
 quit=False
-for x in opts["flags"]:
-	if x in illegal_flags:
-		print("".join(('Flag: "',x,'" is not allowed!')))
-		quit=True
+for i,n in zip(("flags","install"),("Flag","Package group name")):
+	for x in opts[i]:
+		if x in illegal_flags or x.count(" "):
+			print("".join((n,': "',x,'" is not allowed!')))
+			quit=True
+		elif x[:8] in ("install_","pkgroup_"):
+			if i == "flags":
+				print("".join(('Flag: "',x,'" is not allowed!')))
+				quit=True
 
 if quit:
 	sys.exit(1)
 
-## General Config
+# ### SYSTEM CONFIG PROCESSING ###
+# add prefix to all install flags
+opts.update({"install": ["".join(("install_",x)) for x in args.install]})
 
-if opts["no_root_passwd"] and not opts["user"]:
+# make sure at least one user will have a password
+if args.no_root_passwd and not args.user:
 	sys.exit("You have no unprivileged user account, yet root password is disabled!")
-
-# if no hostname is set, get from host
-if opts["hostname"] is None:
-	opts["hostname"] = open('/etc/hostname').read().strip()
 
 # if root-shell is not set, make the same as shell
 if opts["root_shell"] is None:
 	opts["root_shell"] = opts["user_shell"]
 
+# if skip-system is enabled, force mkinitcpio
+if args.skip_system:
+	args.mkinitcpio = True
+
+# ### SHOW OPTIONS ###
 # print the directory in which all the work will be done
 print("".join(("\33[1mBuilding squashfs with directory:\33[0m \33[33m","".join(('"',str(settings["build_dir"]),'"\33[0m')))))
 
@@ -518,73 +502,92 @@ def display_item(i):
 
 # Show all options
 for i,x in opts.items():
-	print("".join(('\33[1m',i.capitalize().replace('_',' '),':\33[0m ',display_item(x))))
+	print("".join(('\33[1m',i.capitalize().replace('_',' ').replace(' arr',''),':\33[0m ',display_item(x))))
 print()
 
 # add export message if export provided
 for i in settings["export"],settings["export_bash"]:
 	if i:
 		print("".join(('The above options will be exported to: "',str(i),'"')))
+
+if settings["export_settings"]:
+	print("Build directory and export path will be exported to settings.json")
+
+if any((settings["export"],settings["export_bash"],settings["export_settings"])):
+	print("Execution will stop after the exports complete")
 prompt_continue()
 
-# replace Paths with strings
-opts.update({
-	"scripts_arr": unexpanded["scripts_arr"],
-	"copy_to_root_arr": unexpanded["copy_to_root_arr"],
-	"mkinitcpio_dir": unexpanded["mkinitcpio_dir"]
-})
+# ### EXPORT OPTIONS ###
+## export functions
+# bash export
+def parse_bash_object(i,x):
+	if type(x) is list:
+		return "".join(('('," ".join(["".join(('"',y,'"')) for y in x]),')'))
+	elif type(x) is bool:
+		return str(x).lower()
+	else:
+		return "".join(('"',str(x),'"'))
 
-# export options to a json file
-if settings["export"]:
-	# check if file exists, ask to overwrite if it does
-	prompt_overwrite(settings["export"])
-	# write json file
-	with open(settings["export"],'w') as file:
-		json.dump(opts,file,indent=2,allow_nan=False)
-	# if a bash export also needs to take place, don't stop execution yet
-	if not settings["export_bash"]:
-		sys.exit()
+if settings["export_settings"]:
+	settings_path=Path("settings.json").absolute()
+	prompt_overwrite(settings_path)
+	with open(settings_path,'w') as file:
+		json.dump(getitems(unexpanded,"build_dir","output_dir"),file,indent=2,allow_nan=False)
 
-# export options as a bash script
 if settings["export_bash"]:
-	# check if file exists, ask to overwrite if it does
 	prompt_overwrite(settings["export_bash"])
-	# simple function for processing arrays and boolean values
-	def parse_object(i,x):
-		if type(x) is list:
-			return "".join(('('," ".join(x),')'))
-		elif type(x) is bool:
-			return str(x).lower()
-		else:
-			return "".join(('"',str(x),'"'))
-	# create main part of script
-	exports="\n".join(["".join((i,'=',parse_object(i,x))) for i,x in opts.items() if i != "flags"])
-	flags="\n".join(["".join((x,'=true')) for x in opts["flags"]])
-	# open file for writing
-	with open(settings["export_bash"],'w') as file:
-		# write header
-		file.write("""#!/usr/bin/bash
-# This is an generated script that establishes a set of options for building an Arch Linux system
+	bash_export = opts.copy() # make a copy of the options
+	bash_export.update(unexpanded) # replace full paths with unexpanded paths
+	reassignkeys(bash_export,("build_dir","output_dir","mkinitcpio_dir"),("wdir","odir","mdir"))
+	delkeys(bash_export,"flags","install") # remove flags and pkgroups so they can be added seperately
+	with open(settings["export_bash"],'w') as file: # start writing file
+		file.write("#!/usr/bin/env bash\n") # write shebang
+		file.write("# this is a generated wrapper script for starchy.sh\n") # header comment
+		for i,x in bash_export.items(): # write all options as variable declarations
+			file.write("".join((i,'=',parse_bash_object(i,x),'\n')))
+		for category in "flags","install": # add flags and package groups seperately
+			if opts[category]: # if flags or install is provided at all
+				file.write("".join(('\n# ',category,'\n'))) # write comment
+				for x in opts[category]: # write all flags as <value>=true
+					file.write("".join((x,"=true\n")))
+		file.write("""
+# Run script
+if [[ ! $skip_system = true ]]; then
+	if [[ -f starchy.sh ]]; then
+		source starchy.sh
+	else
+		echo starchy.sh not found!
+	fi
+fi
 
-# Options
-"""
-		)
-		file.write(exports) # write main options
-		file.write("\n\n# Flags\n")
-		file.write(flags) # write flags
-		# write section to source script
-		file.write("".join(('\n\n# Run script\nif [[ -f "',unexpanded["path"],'" ]]; then\n\tsource "',unexpanded["path"],'"\nelse\n\techo Script not found!\n\texit 1\nfi')))
-	# make file executable
-	settings["export_bash"].chmod(0o755)
+if [[ $mkinitcpio = true ]]; then
+	if [[ -f mkinitcpio.sh ]]; then
+		source mkinitcpio.sh
+	else
+		echo starchy.sh not found!
+	fi
+fi
+""")
+		settings["export_bash"].chmod(0o755)
+
+if settings["export"]:
+	prompt_overwrite(settings["export"])
+	json_export = opts.copy()
+	cpvalues(unexpanded,json_export,"scripts_arr","copy_to_root_arr")
+	json_export.update({"install": [x[8:] for x in opts["install"]]}) # strip install_ prefixes from pkgroups
+	with open(settings["export"],'w') as file: # write json file
+		json.dump(json_export,file,indent=2,allow_nan=False)
+
+if any((settings["export"],settings["export_bash"],settings["export_settings"])):
 	sys.exit()
 
-# Function to turn list into a 0x1b separated array that can later be turned back into a bash array
-# null separation throws an Exception in bash :/
+# ### RUN PROGRAM ###
+# function that turns an array into a string seperated by 0x1b.
 def script_array(array):
 	return "\33".join(array)
 
 # create function for turning options into environment variables
-def envify(i,x):
+def envify(x):
 	if type(x) is list:
 		return script_array(x)
 	elif type(x) is bool:
@@ -592,21 +595,29 @@ def envify(i,x):
 	else:
 		return str(x)
 
-## Set up environment variables
-# add relevant directories
-opts.update({'wdir': settings["build_dir"], 'odir': settings["output_dir"], 'mdir': opts["mkinitcpio_dir"]})
-env = {i:envify(i,x) for i,x in opts.items()}
+# create dictionary for environment variables
+env = {}
 
-# Disable warning in script
-env.update({'warning':'false'})
+# add flags and pkgroups
+for category in "flags","install":
+	for x in opts[category]:
+		env.update({x: "true"})
 
-# Add flags seperately to array
-env.update({x:"true" for x in opts["flags"]})
-env.pop("flags")
+# delete original lists
+delkeys(opts,"flags","install")
 
-print("\n---\n")
-if settings["path"].is_file():
-	subprocess.run(('bash',settings["path"]),env=env)
-else:
-	print("".join(('Could not find build script at: "',str(settings["path"]),'"')))
-	sys.exit(1)
+# add unexpanded paths to environment variables
+env.update(unexpanded)
+
+# reassign keys to their script names
+reassignkeys(env,("build_dir","output_dir","mkinitcpio_dir"),("wdir","odir","mdir"))
+
+# turn values into environment variable strings
+for i,x in opts.items():
+	if i not in env:
+		env.update({i:envify(x)})
+	elif type(x) is list:
+		env[i] = envify(env[i])
+
+# run script
+subprocess.run(("bash",Path("starchy.sh").absolute()),env=env)
